@@ -217,6 +217,36 @@ final class WorkLogTests: XCTestCase {
         XCTAssertEqual(TypeDragLayout.holeMinY(origin: 1, destination: 2, slots: uneven, spacing: 12), 144)
     }
 
+    func testTagDragFollowsRowsThenCenters() {
+        let slots = [
+            CGRect(x: 0, y: 0, width: 40, height: 22),
+            CGRect(x: 46, y: 0, width: 40, height: 22),
+            CGRect(x: 92, y: 0, width: 40, height: 22),
+            CGRect(x: 0, y: 28, width: 40, height: 22)
+        ]
+        let onSecond = CGPoint(x: slots[2].midX, y: slots[2].midY)
+        XCTAssertEqual(TypeDragLayout.tagLandingIndex(origin: 0, slots: slots, point: onSecond), 1)
+        let pastSecond = CGPoint(x: slots[2].maxX - 1, y: slots[2].midY)
+        XCTAssertEqual(TypeDragLayout.tagLandingIndex(origin: 0, slots: slots, point: pastSecond), 2)
+        let beforeLast = CGPoint(x: slots[3].minX + 2, y: slots[3].midY)
+        XCTAssertEqual(TypeDragLayout.tagLandingIndex(origin: 0, slots: slots, point: beforeLast), 2)
+        let afterLast = CGPoint(x: slots[3].maxX - 1, y: slots[3].midY)
+        XCTAssertEqual(TypeDragLayout.tagLandingIndex(origin: 0, slots: slots, point: afterLast), 3)
+    }
+
+    func testTagOffsetsSlideNeighborsWhileDragging() {
+        let slots = [
+            CGRect(x: 10, y: 20, width: 40, height: 22),
+            CGRect(x: 56, y: 20, width: 30, height: 22),
+            CGRect(x: 92, y: 20, width: 50, height: 22)
+        ]
+        let offsets = TypeDragLayout.tagOffsets(origin: 0, destination: 2, slots: slots, width: 200, spacing: 6)
+        XCTAssertEqual(offsets[1].width, -46, accuracy: 0.1)
+        XCTAssertEqual(offsets[2].width, -46, accuracy: 0.1)
+        XCTAssertEqual(offsets[0].width, 92, accuracy: 0.1)
+        XCTAssertEqual(offsets[0].height, 0, accuracy: 0.1)
+    }
+
     func testDraggedItemLeavesTheListAndTheGapTakesTheLandingSlot() {
         let ids = ["a", "b", "c"]
         let day = "2026-10-25"

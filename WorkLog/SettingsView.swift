@@ -11,6 +11,17 @@ struct TypeDragLayout {
         return target
     }
 
+    /// Wrapped tags. A slot counts as passed when the pointer is below its row, or on its row and past its center.
+    static func tagLandingIndex(origin: Int, slots: [CGRect], point: CGPoint) -> Int {
+        var target = 0
+        for (index, slot) in slots.enumerated() where index != origin {
+            let sameRow = point.y >= slot.minY - 4 && point.y <= slot.maxY + 4
+            let passed = sameRow ? point.x > slot.midX : point.y > slot.midY
+            if passed { target += 1 }
+        }
+        return min(max(target, 0), max(slots.count - 1, 0))
+    }
+
     static func shift(index: Int, origin: Int, destination: Int, distance: CGFloat) -> CGFloat {
         if destination > origin, index > origin, index <= destination { return -distance }
         if destination < origin, index >= destination, index < origin { return distance }
@@ -25,6 +36,46 @@ struct TypeDragLayout {
             return slots[destination].maxY - distance + spacing
         }
         return slots[destination].minY + distance - spacing - height
+    }
+
+    /// Where each original tag should slide while a drag is in progress. Index `origin` is included.
+    static func tagOffsets(origin: Int, destination: Int, slots: [CGRect], width: CGFloat, spacing: CGFloat) -> [CGSize] {
+        guard slots.isEmpty == false, slots.indices.contains(origin), slots.indices.contains(destination) else {
+            return Array(repeating: .zero, count: slots.count)
+        }
+        var order = Array(slots.indices)
+        if origin != destination {
+            let item = order.remove(at: origin)
+            order.insert(item, at: min(max(destination, 0), order.count))
+        }
+        let sizes = order.map { CGSize(width: slots[$0].width, height: slots[$0].height) }
+        let packed = pack(sizes: sizes, origin: CGPoint(x: slots[0].minX, y: slots[0].minY), width: width, spacing: spacing)
+        var offsets = Array(repeating: CGSize.zero, count: slots.count)
+        for (visual, original) in order.enumerated() {
+            let target = packed[visual]
+            let from = slots[original]
+            offsets[original] = CGSize(width: target.minX - from.minX, height: target.minY - from.minY)
+        }
+        return offsets
+    }
+
+    static func pack(sizes: [CGSize], origin: CGPoint, width: CGFloat, spacing: CGFloat) -> [CGRect] {
+        var x = origin.x
+        var y = origin.y
+        var rowHeight: CGFloat = 0
+        var rects: [CGRect] = []
+        let maxX = origin.x + max(width, 1)
+        for size in sizes {
+            if x > origin.x, x + size.width > maxX + 0.5 {
+                y += rowHeight + spacing
+                x = origin.x
+                rowHeight = 0
+            }
+            rects.append(CGRect(x: x, y: y, width: size.width, height: size.height))
+            rowHeight = max(rowHeight, size.height)
+            x += size.width + spacing
+        }
+        return rects
     }
 }
 
@@ -48,6 +99,8 @@ struct SettingsView: View {
     @State private var tab = 0
     @State private var launchOn = false
     @State private var launchNeedsApproval = false
+    @State private var subtypeDialog: SubtypeDialogRequest?
+    @State private var subtypeHover = SubtypeHover()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -68,6 +121,16 @@ struct SettingsView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .frame(width: 520, height: 560)
+        .overlay {
+            if let subtypeDialog {
+                SubtypeNameDialog(
+                    title: subtypeDialog.childID == nil ? "添加二级类型" : "修改二级类型",
+                    initialName: subtypeDialog.name,
+                    onCancel: { self.subtypeDialog = nil },
+                    onConfirm: { confirmSubtype($0) }
+                )
+            }
+        }
         .overlay(alignment: .top) {
             if let toast {
                 Text(toast)
@@ -82,13 +145,22 @@ struct SettingsView: View {
         }
         .animation(.easeOut(duration: 0.18), value: toast)
         .background(WorkColor.card)
-        .onAppear { refreshLaunch() }
+        .background(WindowReader { subtypeHover.window = $0 })
+        .onAppear {
+            refreshLaunch()
+            subtypeHover.open = { subtypeDialog = $0 }
+            subtypeHover.start()
+        }
         .onChange(of: tab) { _, newValue in
+            subtypeDialog = nil
             guard newValue != 1 else { return }
             drag = nil
             flushTypeDrafts()
         }
-        .onDisappear { flushTypeDrafts() }
+        .onDisappear {
+            subtypeHover.stop()
+            flushTypeDrafts()
+        }
     }
 
     private var generalPage: some View {
@@ -150,7 +222,7 @@ struct SettingsView: View {
             .padding(.top, 14)
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("每一组是一个一级类型，缩进去的是它的二级类型。拖动前面的图标可以调整顺序。")
+                    Text("一级类型拖动前面的图标排序。二级类型是标签，拖动标签排序，点后面的加号添加，双击标签修改，点叉删除。")
                         .font(.system(size: 13))
                         .foregroundStyle(WorkColor.secondary)
                     if model.hasLibrary == false {
@@ -198,7 +270,7 @@ struct SettingsView: View {
     }
 
     private var appVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.1"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.2"
     }
 
     private var launchBinding: Binding<Bool> {
@@ -257,31 +329,38 @@ struct SettingsView: View {
     }
 
     private func typeCard(_ type: WorkType, index: Int, ghost: Bool = false) -> some View {
-        let children = type.children.sorted { $0.order < $1.order }
+        let children = type.children
+            .filter { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }
+            .sorted { $0.order < $1.order }
         let folding = drag != nil && drag?.parentID == nil
         let hidden = !ghost && folding && drag?.id == type.id
         return VStack(alignment: .leading, spacing: 8) {
             typeRow(id: type.id, parentID: nil, name: type.name, index: index, ghost: ghost)
             if folding == false {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(Array(children.enumerated()), id: \.element.id) { childIndex, child in
-                        typeRow(
-                            id: child.id,
-                            parentID: type.id,
-                            name: child.name,
-                            index: childIndex,
-                            prompt: "请输入二级类型名称",
-                            ghost: ghost
-                        )
-                        .opacity(!ghost && drag?.parentID == type.id && drag?.id == child.id ? 0 : 1)
-                        .offset(y: ghost ? 0 : childShift(parentID: type.id, index: childIndex))
+                VStack(alignment: .leading, spacing: 8) {
+                    ChipWrap(spacing: 6) {
+                        ForEach(Array(children.enumerated()), id: \.element.id) { childIndex, child in
+                            subtypeTag(id: child.id, parentID: type.id, name: child.name, index: childIndex, ghost: ghost)
+                                    .opacity(!ghost && drag?.parentID == type.id && drag?.id == child.id ? 0 : 1)
+                                    .offset(tagShift(parentID: type.id, index: childIndex))
+                        }
+                        if ghost == false {
+                            Button {
+                                discardEmptyChildren(of: type.id)
+                                subtypeDialog = SubtypeDialogRequest(parentID: type.id, childID: nil, name: "")
+                            } label: {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(WorkColor.secondary)
+                                    .frame(width: 22, height: 22)
+                                    .background(Color.white, in: Circle())
+                                    .overlay(Circle().stroke(Color(red: 0.867, green: 0.839, blue: 0.796)))
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("添加二级类型")
+                        }
                     }
-                    Button("＋ 添加二级类型") {
-                        addChild(of: type)
-                    }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 13))
-                    .foregroundStyle(WorkColor.blue)
+                    .background { if !ghost { frameReader("tags:\(type.id)") } }
                 }
                 .padding(.leading, 12)
                 .overlay(alignment: .leading) {
@@ -344,6 +423,7 @@ struct SettingsView: View {
     private func reorderGesture(id: String, parentID: String?, index: Int) -> some Gesture {
         DragGesture(minimumDistance: 4, coordinateSpace: .named("settings"))
             .onChanged { value in
+                subtypeHover.dragging = true
                 NSCursor.closedHand.set()
                 if drag == nil {
                     guard var session = beginDrag(id: id, parentID: parentID, index: index) else { return }
@@ -356,7 +436,7 @@ struct SettingsView: View {
                 }
                 guard drag?.id == id, let session = drag else { return }
                 dragTranslation = value.translation
-                let dest = landingIndex(of: session, y: value.location.y)
+                let dest = landingIndex(of: session, point: value.location)
                 if session.destinationIndex != dest {
                     withAnimation(.easeOut(duration: 0.16)) {
                         drag?.destinationIndex = dest
@@ -364,13 +444,14 @@ struct SettingsView: View {
                 }
             }
             .onEnded { value in
+                subtypeHover.dragging = false
                 NSCursor.arrow.set()
                 guard let session = drag, session.id == id else {
                     drag = nil
                     dragTranslation = .zero
                     return
                 }
-                let dest = landingIndex(of: session, y: value.location.y)
+                let dest = landingIndex(of: session, point: value.location)
                 var transaction = Transaction()
                 transaction.disablesAnimations = true
                 withTransaction(transaction) {
@@ -411,15 +492,7 @@ struct SettingsView: View {
                       let parent = model.types.first(where: { $0.id == parentID }),
                       let child = parent.children.first(where: { $0.id == drag.id }) {
                 let index = parent.children.sorted { $0.order < $1.order }.firstIndex(where: { $0.id == child.id }) ?? drag.originIndex
-                typeRow(
-                    id: child.id,
-                    parentID: parentID,
-                    name: child.name,
-                    index: index,
-                    prompt: "请输入二级类型名称",
-                    ghost: true
-                )
-                .background(Color.white, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                subtypeTag(id: child.id, parentID: parentID, name: child.name, index: index, ghost: true)
             }
         }
         .frame(width: drag.start.width, height: drag.start.height, alignment: .topLeading)
@@ -439,11 +512,17 @@ struct SettingsView: View {
         if parentID == nil {
             return beginRootDrag(id: id, index: index)
         }
+        guard let parentID else { return nil }
         guard let start = frames["row:\(id)"] else { return nil }
-        let ids = model.types.first(where: { $0.id == parentID })?.children.sorted { $0.order < $1.order }.map(\.id) ?? []
+        let ids = model.types.first(where: { $0.id == parentID })?.children
+            .filter { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }
+            .sorted { $0.order < $1.order }
+            .map(\.id) ?? []
         let slots = ids.compactMap { frames["row:\($0)"] }
         guard slots.count == ids.count, slots.indices.contains(index) else { return nil }
         let inferred = slots.count >= 2 ? slots[1].minY - slots[0].maxY : 6
+        let contentSpan = (slots.map(\.maxX).max() ?? 0) - (slots.map(\.minX).min() ?? 0)
+        let wrapWidth = frames["tags:\(parentID)"]?.width ?? contentSpan
         return TypeDrag(
             id: id,
             parentID: parentID,
@@ -452,7 +531,8 @@ struct SettingsView: View {
             start: start,
             lift: start,
             slots: slots,
-            spacing: inferred > 0 ? inferred : 6
+            spacing: 6,
+            wrapWidth: wrapWidth > 1 ? wrapWidth : (inferred > 0 ? inferred : 6)
         )
     }
 
@@ -480,20 +560,35 @@ struct SettingsView: View {
             start: row,
             lift: CGRect(x: grabbed.minX, y: grabbed.minY, width: row.width, height: row.height),
             slots: slots,
-            spacing: spacing
+            spacing: spacing,
+            wrapWidth: 0
         )
     }
 
-    private func landingIndex(of drag: TypeDrag, y: CGFloat) -> Int {
-        TypeDragLayout.landingIndex(
+    private func landingIndex(of drag: TypeDrag, point: CGPoint) -> Int {
+        if drag.parentID != nil {
+            return TypeDragLayout.tagLandingIndex(origin: drag.originIndex, slots: drag.slots, point: point)
+        }
+        return TypeDragLayout.landingIndex(
             origin: drag.originIndex,
             midYs: drag.slots.map(\.midY),
-            y: y
+            y: point.y
         )
     }
 
     private func holeRect(for drag: TypeDrag) -> CGRect {
-        CGRect(
+        if drag.parentID != nil, drag.slots.indices.contains(drag.originIndex) {
+            let shift = TypeDragLayout.tagOffsets(
+                origin: drag.originIndex,
+                destination: drag.destinationIndex,
+                slots: drag.slots,
+                width: drag.wrapWidth,
+                spacing: drag.spacing
+            )[drag.originIndex]
+            let slot = drag.slots[drag.originIndex]
+            return CGRect(x: slot.minX + shift.width, y: slot.minY + shift.height, width: slot.width, height: slot.height)
+        }
+        return CGRect(
             x: drag.start.minX,
             y: TypeDragLayout.holeMinY(
                 origin: drag.originIndex,
@@ -506,6 +601,19 @@ struct SettingsView: View {
         )
     }
 
+    private func tagShift(parentID: String, index: Int) -> CGSize {
+        guard let drag, drag.parentID == parentID, index != drag.originIndex else { return .zero }
+        let offsets = TypeDragLayout.tagOffsets(
+            origin: drag.originIndex,
+            destination: drag.destinationIndex,
+            slots: drag.slots,
+            width: drag.wrapWidth,
+            spacing: drag.spacing
+        )
+        guard offsets.indices.contains(index) else { return .zero }
+        return offsets[index]
+    }
+
     private func rootShift(_ index: Int) -> CGFloat {
         guard let drag, drag.parentID == nil else { return 0 }
         return TypeDragLayout.shift(
@@ -516,14 +624,68 @@ struct SettingsView: View {
         )
     }
 
-    private func childShift(parentID: String, index: Int) -> CGFloat {
-        guard let drag, drag.parentID == parentID else { return 0 }
-        return TypeDragLayout.shift(
-            index: index,
-            origin: drag.originIndex,
-            destination: drag.destinationIndex,
-            distance: drag.start.height + drag.spacing
-        )
+    private func subtypeTag(id: String, parentID: String, name: String, index: Int, ghost: Bool) -> some View {
+        let chip = HStack(spacing: 2) {
+            Text(name)
+                .font(.system(size: 12))
+                .foregroundStyle(WorkColor.ink)
+                .lineLimit(1)
+                .padding(.leading, 8)
+                .padding(.trailing, 2)
+                .frame(height: 22)
+                .contentShape(Rectangle())
+            Image(systemName: "xmark")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(WorkColor.secondary)
+                .frame(width: 14, height: 14)
+                .padding(.trailing, 4)
+        }
+        .frame(height: 22)
+        .background(Color.white, in: Capsule())
+        .overlay(Capsule().stroke(Color(red: 0.867, green: 0.839, blue: 0.796)))
+        return Group {
+            if ghost {
+                chip
+            } else {
+                HStack(spacing: 2) {
+                    Text(name)
+                        .font(.system(size: 12))
+                        .foregroundStyle(WorkColor.ink)
+                        .lineLimit(1)
+                        .padding(.leading, 8)
+                        .padding(.trailing, 2)
+                        .frame(height: 22)
+                        .contentShape(Rectangle())
+                        .onHover { inside in
+                            if inside {
+                                NSCursor.openHand.set()
+                                subtypeHover.request = SubtypeDialogRequest(parentID: parentID, childID: id, name: name)
+                            } else {
+                                NSCursor.arrow.set()
+                                if subtypeHover.request?.childID == id { subtypeHover.request = nil }
+                            }
+                        }
+                        .highPriorityGesture(reorderGesture(id: id, parentID: parentID, index: index))
+                        .accessibilityLabel("拖动调整顺序，双击修改")
+                    Button {
+                        model.deleteType(id: id, parentID: parentID)
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(WorkColor.secondary)
+                            .frame(width: 14, height: 14)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.trailing, 4)
+                    .accessibilityLabel("删除\(name)")
+                }
+                .frame(height: 22)
+                .background(Color.white, in: Capsule())
+                .overlay(Capsule().stroke(Color(red: 0.867, green: 0.839, blue: 0.796)))
+                .background { frameReader("row:\(id)") }
+            }
+        }
     }
 
     private func iconButton(_ symbol: String, action: @escaping () -> Void) -> some View {
@@ -544,11 +706,35 @@ struct SettingsView: View {
         }
     }
 
-    private func addChild(of type: WorkType) {
-        commitDrafts(of: type)
-        if let error = model.addType(parentID: type.id, name: "", allowEmpty: true) {
-            showToast(error)
+    private func discardEmptyChildren(of parentID: String) {
+        guard let type = model.types.first(where: { $0.id == parentID }) else { return }
+        for child in type.children where child.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            model.discardUnnamedChild(id: child.id, parentID: parentID)
+            drafts[child.id] = nil
         }
+    }
+
+    private func confirmSubtype(_ typed: String) {
+        guard let request = subtypeDialog else { return }
+        let trimmed = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            showToast("名称不能为空。")
+            return
+        }
+        if let childID = request.childID {
+            if trimmed == request.name {
+                subtypeDialog = nil
+                return
+            }
+            if let error = model.renameType(id: childID, parentID: request.parentID, name: trimmed) {
+                showToast(error)
+                return
+            }
+        } else if let error = model.addType(parentID: request.parentID, name: trimmed) {
+            showToast(error)
+            return
+        }
+        subtypeDialog = nil
     }
 
     private func commitDrafts(of type: WorkType) {
@@ -622,6 +808,7 @@ private struct TypeDrag {
     var lift: CGRect
     var slots: [CGRect]
     var spacing: CGFloat
+    var wrapWidth: CGFloat
 }
 
 private struct TypeNameField: View {
@@ -667,5 +854,114 @@ private struct TypeNameField: View {
             .onAppear {
                 if name.isEmpty { focused = true }
             }
+    }
+}
+
+private struct SubtypeDialogRequest {
+    var parentID: String
+    var childID: String?
+    var name: String
+}
+
+/// Double-click on a tag opens the editor. The drag gesture keeps the mouse, so this watches the click instead.
+private final class SubtypeHover {
+    var request: SubtypeDialogRequest?
+    var dragging = false
+    weak var window: NSWindow?
+    var open: ((SubtypeDialogRequest) -> Void)?
+    private var monitor: Any?
+
+    func start() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] event in
+            guard let self,
+                  event.clickCount == 2,
+                  event.window === self.window,
+                  self.dragging == false,
+                  let request = self.request else { return event }
+            let open = self.open
+            DispatchQueue.main.async { open?(request) }
+            return event
+        }
+    }
+
+    func stop() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+    }
+}
+
+private struct WindowReader: NSViewRepresentable {
+    var onWindow: (NSWindow?) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async { onWindow(view.window) }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async { onWindow(nsView.window) }
+    }
+}
+
+private struct SubtypeNameDialog: View {
+    let title: String
+    let initialName: String
+    let onCancel: () -> Void
+    let onConfirm: (String) -> Void
+    @State private var text: String
+    @FocusState private var focused: Bool
+
+    init(title: String, initialName: String, onCancel: @escaping () -> Void, onConfirm: @escaping (String) -> Void) {
+        self.title = title
+        self.initialName = initialName
+        self.onCancel = onCancel
+        self.onConfirm = onConfirm
+        _text = State(initialValue: initialName)
+    }
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.28)
+                .contentShape(Rectangle())
+                .onTapGesture(perform: onCancel)
+            VStack(alignment: .leading, spacing: 12) {
+                Text(title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(WorkColor.ink)
+                TextField("", text: $text, prompt: Text("请输入二级类型名称").foregroundStyle(WorkColor.tertiary))
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+                    .focused($focused)
+                    .padding(.horizontal, 8)
+                    .frame(height: 28)
+                    .background(Color.white, in: RoundedRectangle(cornerRadius: 7))
+                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color(red: 0.867, green: 0.839, blue: 0.796)))
+                    .onSubmit { onConfirm(text) }
+                HStack(spacing: 8) {
+                    Spacer()
+                    Button("取消", action: onCancel)
+                        .buttonStyle(WorkButtonStyle())
+                        .keyboardShortcut(.cancelAction)
+                    Button("确定") { onConfirm(text) }
+                        .buttonStyle(WorkButtonStyle(prominent: true))
+                }
+            }
+            .padding(16)
+            .frame(width: 300)
+            .background(WorkColor.card, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(WorkColor.line))
+            .contentShape(Rectangle())
+            .onTapGesture {}
+            .shadow(color: .black.opacity(0.16), radius: 18, y: 8)
+        }
+        .onAppear {
+            focused = true
+            guard initialName.isEmpty == false else { return }
+            DispatchQueue.main.async {
+                (NSApp.keyWindow?.firstResponder as? NSTextView)?.selectAll(nil)
+            }
+        }
     }
 }

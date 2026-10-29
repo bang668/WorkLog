@@ -24,6 +24,7 @@ struct SidebarView: View {
         }
         .frame(maxHeight: .infinity, alignment: .top)
         .background(WorkColor.sidebar)
+        .simultaneousGesture(TapGesture().onEnded { model.clearPasteDay() })
     }
 
     private func yearBlock(_ year: String) -> some View {

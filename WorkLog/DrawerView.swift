@@ -104,7 +104,7 @@ private struct TypeChip: View {
     }
 }
 
-private struct ChipWrap: Layout {
+struct ChipWrap: Layout {
     var spacing: CGFloat = 6
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
@@ -234,7 +234,10 @@ struct DrawerOverlay: View {
             if model.draft != nil {
                 Color(red: 40 / 255, green: 36 / 255, blue: 30 / 255).opacity(0.28)
                     .transition(.opacity)
-                    .onTapGesture { model.cancelDraft() }
+                    .onTapGesture {
+                        model.clearPasteDay()
+                        model.cancelDraft()
+                    }
             }
             if model.draft != nil {
                 drawer

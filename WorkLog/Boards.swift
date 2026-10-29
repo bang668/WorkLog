@@ -51,6 +51,8 @@ struct MonthBoard: View {
                 }
             }
             .fixedSize(horizontal: false, vertical: true)
+            .contentShape(Rectangle())
+            .onTapGesture { model.clearPasteDay() }
             ForEach(Array(weeks.enumerated()), id: \.offset) { _, week in
                 HStack(alignment: .center, spacing: 3) {
                     Button {
@@ -104,6 +106,11 @@ private enum ColumnKind {
     case week
 }
 
+private enum DayFrame {
+    /// Color frame left on the current day after the paste selection is cleared.
+    static let parked = Color(red: 0.47, green: 0.69, blue: 1)
+}
+
 private struct DayColumn: View {
     @Environment(AppModel.self) private var model
     let day: String
@@ -112,6 +119,12 @@ private struct DayColumn: View {
 
     var body: some View {
         let selected = day == model.selectedDay
+        let armed = selected && model.pasteDay == day
+        let frame: Color = {
+            guard kind == .week else { return .clear }
+            if selected == false { return WorkColor.line }
+            return armed ? WorkColor.blue : DayFrame.parked
+        }()
         VStack(alignment: .leading, spacing: 0) {
             if kind == .week {
                 weekHead
@@ -160,10 +173,17 @@ private struct DayColumn: View {
         .background(WorkColor.card, in: RoundedRectangle(cornerRadius: kind == .day ? 0 : 10))
         .overlay(
             RoundedRectangle(cornerRadius: kind == .day ? 0 : 10)
-                .stroke(kind == .week && selected ? WorkColor.blue : (kind == .week ? WorkColor.line : Color.clear), lineWidth: selected && kind == .week ? 1.5 : 1)
+                .stroke(frame, lineWidth: selected && kind == .week ? 1.5 : 1)
         )
+        .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .simultaneousGesture(TapGesture().onEnded { model.go(to: day) })
+        .simultaneousGesture(TapGesture().onEnded {
+            if kind == .week {
+                model.choosePasteDay(day)
+            } else {
+                model.clearPasteDay()
+            }
+        })
         .onDrop(of: [.plainText], delegate: ItemDropDelegate(day: day, target: .column, model: model))
         .onPreferenceChange(ItemHeightKey.self) { model.noteItemHeights($0) }
     }
@@ -175,7 +195,7 @@ private struct DayColumn: View {
     private var weekHead: some View {
         let today = day == model.today
         return VStack(alignment: .leading, spacing: 2) {
-            Button { model.go(to: day) } label: {
+            Button { model.choosePasteDay(day) } label: {
                 Text(WorkCalendar.weekdayName(of: day))
                     .font(.system(size: 12, weight: .semibold))
                     .padding(.horizontal, slim ? 3 : 8)
@@ -432,6 +452,7 @@ private struct MonthCell: View {
     var body: some View {
         let outside = WorkCalendar.monthKey(fromDay: day) != viewMonth
         let selected = day == model.selectedDay
+        let armed = selected && model.pasteDay == day
         let today = day == model.today
         ZStack(alignment: .topTrailing) {
             VStack(alignment: .leading, spacing: 2) {
@@ -488,11 +509,11 @@ private struct MonthCell: View {
         }
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(selected ? WorkColor.blue : (hovering ? Color(red: 0.84, green: 0.82, blue: 0.78) : WorkColor.line), lineWidth: selected ? 1.5 : 1)
+                .stroke(selected ? (armed ? WorkColor.blue : DayFrame.parked) : (hovering ? Color(red: 0.84, green: 0.82, blue: 0.78) : WorkColor.line), lineWidth: selected ? 1.5 : 1)
         )
         .contentShape(RoundedRectangle(cornerRadius: 8))
         .onHover { hovering = $0 }
-        .simultaneousGesture(TapGesture().onEnded { model.go(to: day) })
+        .simultaneousGesture(TapGesture().onEnded { model.choosePasteDay(day) })
         .onDrop(of: [.plainText], delegate: ItemDropDelegate(day: day, target: .column, model: model))
         .onPreferenceChange(ItemHeightKey.self) { model.noteItemHeights($0) }
     }

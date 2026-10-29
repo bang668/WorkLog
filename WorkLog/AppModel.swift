@@ -9,6 +9,8 @@ final class AppModel {
     var types: [WorkType] = []
     var mode: CalendarMode = .week
     var selectedDay: String
+    /// Day clicked in the week or month grid. The color frame can stay after this is cleared.
+    var pasteDay: String? = nil
     var selectedItemID: String?
     var editorKind: EditorKind {
         didSet { UserDefaults.standard.set(editorKind.rawValue, forKey: Keys.editor) }
@@ -51,6 +53,7 @@ final class AppModel {
     }
 
     var hasLibrary: Bool { store != nil && library != nil }
+    var canPaste: Bool { hasLibrary && mode != .day && pasteDay != nil }
     var today: String { WorkCalendar.dayKey(Date()) }
     var draftIsDirty: Bool { draft?.isDirty == true }
 
@@ -196,7 +199,7 @@ final class AppModel {
         }
     }
 
-    func go(to day: String, keepPicker: Bool = false) {
+    func go(to day: String, keepPicker: Bool = false, forPaste: Bool = false) {
         let apply = {
             self.selectedDay = day
             self.pickerMonth = WorkCalendar.monthKey(fromDay: day)
@@ -204,6 +207,11 @@ final class AppModel {
             if !keepPicker { self.activePicker = nil }
             if self.editorKind == .dialog, self.draft == nil {
                 self.selectedItemID = nil
+            }
+            if forPaste {
+                self.pasteDay = self.mode == .day ? nil : day
+            } else if self.pasteDay != day {
+                self.pasteDay = nil
             }
         }
         guard draftIsDirty else {
@@ -214,10 +222,41 @@ final class AppModel {
     }
 
     func showToday() {
+        pasteDay = nil
         go(to: today)
     }
 
+    func choosePasteDay(_ day: String) {
+        guard mode != .day else { return }
+        holdPasteSelection()
+        go(to: day, forPaste: true)
+    }
+
+    func clearPasteDay() {
+        guard pasteSelectionHeld == false else { return }
+        pasteDay = nil
+    }
+
+    /// The day cell and the "click outside" layer can both see one click. Keep the selection for this turn.
+    private var pasteSelectionHeld = false
+
+    private func holdPasteSelection() {
+        pasteSelectionHeld = true
+        DispatchQueue.main.async { [weak self] in
+            self?.pasteSelectionHeld = false
+        }
+    }
+
+    private func flashStatus(_ text: String) {
+        statusMessage = text
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            if statusMessage == text { statusMessage = nil }
+        }
+    }
+
     func shift(_ direction: Int) {
+        pasteDay = nil
         switch mode {
         case .day:
             if let day = WorkCalendar.shiftingDay(selectedDay, by: direction) { go(to: day) }
@@ -232,6 +271,7 @@ final class AppModel {
     }
 
     func openMonth(_ month: String) {
+        pasteDay = nil
         mode = .month
         let todayMonth = WorkCalendar.monthKey(Date())
         if month == todayMonth {
@@ -249,6 +289,7 @@ final class AppModel {
     }
 
     func openWeek(containing day: String) {
+        pasteDay = nil
         mode = .week
         if let monday = WorkCalendar.startOfWeek(containing: day) {
             go(to: monday)
@@ -256,6 +297,7 @@ final class AppModel {
     }
 
     func jumpToWeek(_ week: Int) {
+        pasteDay = nil
         guard let year = WorkCalendar.isoWeekYear(of: selectedDay),
               let monday = WorkCalendar.mondayOfISOWeek(week, year: year) else { return }
         let offset = WorkCalendar.weekdayIndexMondayFirst(of: selectedDay) ?? 0
@@ -264,9 +306,11 @@ final class AppModel {
     }
 
     func select(_ item: WorkItem) {
+        if mode != .day { holdPasteSelection() }
         let apply = {
             self.selectedItemID = item.id
             self.selectedDay = item.date
+            if self.mode != .day { self.pasteDay = item.date }
             self.revealMonth(WorkCalendar.monthKey(fromDay: item.date))
             if self.editorKind == .dialog {
                 if self.draft?.purpose == .edit, self.draft?.itemID == item.id {
@@ -288,8 +332,10 @@ final class AppModel {
     }
 
     func beginAdd(on day: String) {
+        if mode != .day { holdPasteSelection() }
         let apply = {
             self.selectedDay = day
+            if self.mode != .day { self.pasteDay = day }
             self.activePicker = nil
             self.draft = .adding(on: day)
         }
@@ -360,7 +406,10 @@ final class AppModel {
     }
 
     func copySelected() {
-        guard let item = selectedItem else { return }
+        guard let item = selectedItem else {
+            flashStatus("先点中一条事项，再复制。")
+            return
+        }
         let payload = ClipboardPayload(
             description: item.description,
             note: item.note,
@@ -376,6 +425,10 @@ final class AppModel {
     }
 
     func paste() {
+        guard let day = pasteDay, mode != .day else {
+            flashStatus(mode == .day ? "日视图里不能粘贴。" : "先点中某一天，再粘贴。")
+            return
+        }
         let board = NSPasteboard.general
         let payload: ClipboardPayload
         if let data = board.data(forType: Self.pasteboardType),
@@ -384,17 +437,18 @@ final class AppModel {
         } else if let text = board.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
             payload = ClipboardPayload(description: text, note: "", typeId: "", subTypeId: "")
         } else {
+            flashStatus("剪贴板上没有可粘贴的内容。")
             return
         }
         let draft = ItemDraft(
             purpose: .add,
             itemID: nil,
-            date: selectedDay,
+            date: day,
             description: payload.description,
             note: payload.note,
             typeId: payload.typeId,
             subTypeId: payload.subTypeId,
-            original: ItemDraft.Snapshot(date: selectedDay, description: "", note: "", typeId: "", subTypeId: "")
+            original: ItemDraft.Snapshot(date: day, description: "", note: "", typeId: "", subTypeId: "")
         )
         add(draft)
     }

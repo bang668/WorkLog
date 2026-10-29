@@ -45,7 +45,7 @@ struct WorkLogApp: App {
             CommandGroup(replacing: .pasteboard) {
                 Button("拷贝") { model.copySelected() }
                     .keyboardShortcut("c", modifiers: .command)
-                    .disabled(fieldEditing == true || model.selectedItem == nil)
+                    .disabled(fieldEditing == true)
                 Button("粘贴") { model.paste() }
                     .keyboardShortcut("v", modifiers: .command)
                     .disabled(fieldEditing == true || model.hasLibrary == false)

@@ -41,11 +41,17 @@ struct MainCanvas: View {
         .overlay { pickerOverlay }
         .onAppear { model.loadMonths(for: visibleDays) }
         .onChange(of: model.selectedDay) { _, _ in model.loadMonths(for: visibleDays) }
-        .onChange(of: model.mode) { _, _ in model.loadMonths(for: visibleDays) }
+        .onChange(of: model.mode) { _, mode in
+            if mode == .day { model.clearPasteDay() }
+            model.loadMonths(for: visibleDays)
+        }
     }
 
     private var calendar: some View {
         ZStack(alignment: .top) {
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture { model.clearPasteDay() }
             board
                 .padding(.horizontal, 6)
                 .padding(.bottom, 12)
@@ -120,6 +126,7 @@ struct MainCanvas: View {
         .padding(.trailing, 14)
         .frame(height: 52)
         .background(WorkColor.card.opacity(0.92))
+        .simultaneousGesture(TapGesture().onEnded { model.clearPasteDay() })
         .overlay(alignment: .bottom) { Rectangle().fill(WorkColor.line).frame(height: 1) }
     }
 
@@ -140,7 +147,10 @@ struct MainCanvas: View {
         if model.activePicker != nil, chipFrame != .zero {
             ZStack(alignment: .topLeading) {
                 Color.black.opacity(0.001)
-                    .onTapGesture { model.activePicker = nil }
+                    .onTapGesture {
+                        model.clearPasteDay()
+                        model.activePicker = nil
+                    }
                 picker
                     .fixedSize(horizontal: true, vertical: true)
                     .offset(x: chipFrame.minX, y: chipFrame.maxY + 8)
@@ -157,6 +167,7 @@ struct MainCanvas: View {
             MonthPicker()
         case .day:
             DayPicker(month: pickerMonthBinding, selectedDay: model.selectedDay) { day in
+                model.clearPasteDay()
                 model.go(to: day, keepPicker: true)
             }
         case nil:

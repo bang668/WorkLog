@@ -31,6 +31,8 @@ struct SideInspector: View {
         .padding(16)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(WorkColor.card)
+        .contentShape(Rectangle())
+        .simultaneousGesture(TapGesture().onEnded { model.clearPasteDay() })
     }
 
     private var tools: some View {
@@ -77,6 +79,11 @@ struct SideInspector: View {
 struct BottomInspector: View {
     @Environment(AppModel.self) private var model
 
+    /// Date label, date, weekday, and one row of type tags, plus the card padding.
+    private static let cardMinHeight: CGFloat = 110
+    /// Fixed description column. Tune by eye; 280 is the current trial width.
+    private static let descriptionWidth: CGFloat = 280
+
     var body: some View {
         Group {
             if let item = model.selectedItem {
@@ -89,19 +96,22 @@ struct BottomInspector: View {
                             TypeNames.parentName(typeID: item.typeId, types: model.types),
                             TypeNames.childName(typeID: item.typeId, subTypeID: item.subTypeId, types: model.types)
                         ])
+                        .frame(minHeight: 22, alignment: .leading)
                     }
                     .fixedSize(horizontal: true, vertical: false)
-                    block("描述") {
-                        Text(item.description).frame(maxWidth: 480, alignment: .leading)
+                    block("描述", flexible: false) {
+                        FixedDescription(text: item.description, width: Self.descriptionWidth)
                     }
                     block("备注") {
                         if item.note.isEmpty {
-                            EmptyMark()
+                            EmptyMark().frame(maxWidth: .infinity, alignment: .leading)
                         } else {
-                            Text(item.note).frame(maxWidth: 240, alignment: .leading)
+                            Text(item.note)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
-                    Spacer(minLength: 0)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     HStack(spacing: 10) {
                         Button("编辑") { model.beginEditSelected() }
                             .buttonStyle(.plain)
@@ -110,10 +120,11 @@ struct BottomInspector: View {
                             .buttonStyle(.plain)
                             .foregroundStyle(WorkColor.secondary)
                     }
+                    .fixedSize(horizontal: true, vertical: false)
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, minHeight: Self.cardMinHeight, alignment: .topLeading)
                 .background(WorkColor.card, in: RoundedRectangle(cornerRadius: 12))
                 .padding(.horizontal, 16)
                 .padding(.bottom, 16)
@@ -122,24 +133,77 @@ struct BottomInspector: View {
                     .font(.system(size: 13))
                     .foregroundStyle(WorkColor.secondary)
                     .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 18)
+                .frame(maxWidth: .infinity, minHeight: Self.cardMinHeight)
                 .background(WorkColor.card, in: RoundedRectangle(cornerRadius: 12))
                 .padding(.horizontal, 16)
                 .padding(.bottom, 16)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .simultaneousGesture(TapGesture().onEnded { model.clearPasteDay() })
     }
 
-    private func block(_ title: String, @ViewBuilder content: () -> some View) -> some View {
+    private func block(_ title: String, flexible: Bool = true, @ViewBuilder content: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title).font(.system(size: 12)).foregroundStyle(WorkColor.secondary)
             content()
                 .font(.system(size: 14))
         }
-        .fixedSize(horizontal: true, vertical: false)
+        .frame(maxWidth: flexible ? .infinity : nil, alignment: .leading)
+        .fixedSize(horizontal: flexible == false, vertical: false)
     }
 
+}
+
+/// Description stays one width. Extra lines wrap, and a long body scrolls inside the column.
+private struct FixedDescription: View {
+    let text: String
+    var width: CGFloat
+    /// About four lines, then the column scrolls instead of growing the bar.
+    private let maxHeight: CGFloat = 88
+    @State private var contentHeight: CGFloat = 0
+
+    var body: some View {
+        let limit = contentHeight > maxHeight ? maxHeight : nil
+        Group {
+            if contentHeight > maxHeight {
+                ScrollView { wrapping }
+                    .scrollIndicators(.visible)
+            } else {
+                wrapping
+            }
+        }
+        .frame(width: width, height: limit, alignment: .topLeading)
+        .background { measure }
+        .onPreferenceChange(DescriptionHeightKey.self) { contentHeight = $0 }
+    }
+
+    private var wrapping: some View {
+        Text(text)
+            .frame(width: width, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var measure: some View {
+        Text(text)
+            .font(.system(size: 14))
+            .frame(width: width, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .hidden()
+            .background {
+                GeometryReader { geo in
+                    Color.clear.preference(key: DescriptionHeightKey.self, value: geo.size.height)
+                }
+            }
+    }
+}
+
+private struct DescriptionHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
 }
 
 struct TypeResultTags: View {
