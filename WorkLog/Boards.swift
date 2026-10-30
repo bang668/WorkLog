@@ -132,39 +132,55 @@ private struct DayColumn: View {
                     .padding(.top, 8)
             }
             GeometryReader { geo in
-                ScrollView {
-                    if kind == .day {
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: DayDragLayout.gridSpacing)], spacing: DayDragLayout.gridSpacing) {
-                            ForEach(boardSlots(on: day, model: model)) { slot in
-                                switch slot {
-                                case .item(let item):
-                                    DayGridCard(item: item)
-                                case .gap:
-                                    ItemDropGap(height: DayGridCard.height, radius: 12)
-                                        .itemDrop(day: day, beforeID: model.itemDragPreview?.beforeID, model: model)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        if kind == .day {
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: DayDragLayout.gridSpacing)], spacing: DayDragLayout.gridSpacing) {
+                                ForEach(boardSlots(on: day, model: model)) { slot in
+                                    switch slot {
+                                    case .item(let item):
+                                        DayGridCard(item: item)
+                                            .id(item.id)
+                                    case .gap:
+                                        ItemDropGap(height: DayGridCard.height, radius: 12)
+                                            .itemDrop(day: day, beforeID: model.itemDragPreview?.beforeID, model: model)
+                                    }
                                 }
+                                DayAddButton(day: day)
                             }
-                            DayAddButton(day: day)
-                        }
-                        .animation(.easeOut(duration: 0.16), value: model.itemDragPreview)
-                        .padding(16)
-                        .frame(width: geo.size.width, alignment: .leading)
-                    } else {
-                        VStack(alignment: .leading, spacing: 2) {
-                            ForEach(boardSlots(on: day, model: model)) { slot in
-                                switch slot {
-                                case .item(let item):
-                                    EntryRow(item: item, kind: kind)
-                                case .gap:
-                                    ItemDropGap(height: draggedRowHeight(model: model, fallback: 32), radius: 7)
-                                        .itemDrop(day: day, beforeID: model.itemDragPreview?.beforeID, model: model)
+                            .animation(.easeOut(duration: 0.16), value: model.itemDragPreview)
+                            .padding(16)
+                            .frame(width: geo.size.width, alignment: .leading)
+                        } else {
+                            VStack(alignment: .leading, spacing: 2) {
+                                ForEach(boardSlots(on: day, model: model)) { slot in
+                                    switch slot {
+                                    case .item(let item):
+                                        EntryRow(item: item, kind: kind)
+                                            .id(item.id)
+                                    case .gap:
+                                        ItemDropGap(height: draggedRowHeight(model: model, fallback: 32), radius: 7)
+                                            .itemDrop(day: day, beforeID: model.itemDragPreview?.beforeID, model: model)
+                                    }
                                 }
+                                plus
                             }
-                            plus
+                            .animation(.easeOut(duration: 0.16), value: model.itemDragPreview)
+                            .padding(6)
+                            .frame(width: geo.size.width, alignment: .leading)
                         }
-                        .animation(.easeOut(duration: 0.16), value: model.itemDragPreview)
-                        .padding(6)
-                        .frame(width: geo.size.width, alignment: .leading)
+                    }
+                    .onAppear {
+                        guard kind == .day else { return }
+                        model.noteDayGridColumns(ItemArrow.columns(fitting: geo.size.width))
+                    }
+                    .onChange(of: geo.size.width) { _, width in
+                        guard kind == .day else { return }
+                        model.noteDayGridColumns(ItemArrow.columns(fitting: width))
+                    }
+                    .onChange(of: model.selectedItemID) { _, id in
+                        guard day == model.selectedDay, let id else { return }
+                        proxy.scrollTo(id, anchor: .center)
                     }
                 }
             }
@@ -467,21 +483,28 @@ private struct MonthCell: View {
                     .padding(.top, slim ? 3 : 4)
                     .padding(.leading, slim ? 2 : 4)
                 GeometryReader { geo in
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 2) {
-                            ForEach(boardSlots(on: day, model: model)) { slot in
-                                switch slot {
-                                case .item(let item):
-                                    MonthEntry(item: item)
-                                case .gap:
-                                    ItemDropGap(height: draggedRowHeight(model: model, fallback: 22), radius: 4)
-                                        .itemDrop(day: day, beforeID: model.itemDragPreview?.beforeID, model: model)
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 2) {
+                                ForEach(boardSlots(on: day, model: model)) { slot in
+                                    switch slot {
+                                    case .item(let item):
+                                        MonthEntry(item: item)
+                                            .id(item.id)
+                                    case .gap:
+                                        ItemDropGap(height: draggedRowHeight(model: model, fallback: 22), radius: 4)
+                                            .itemDrop(day: day, beforeID: model.itemDragPreview?.beforeID, model: model)
+                                    }
                                 }
                             }
+                            .animation(.easeOut(duration: 0.16), value: model.itemDragPreview)
+                            .padding(.horizontal, 2)
+                            .frame(width: geo.size.width, alignment: .leading)
                         }
-                        .animation(.easeOut(duration: 0.16), value: model.itemDragPreview)
-                        .padding(.horizontal, 2)
-                        .frame(width: geo.size.width, alignment: .leading)
+                        .onChange(of: model.selectedItemID) { _, id in
+                            guard day == model.selectedDay, let id else { return }
+                            proxy.scrollTo(id, anchor: .center)
+                        }
                     }
                 }
             }
@@ -541,6 +564,63 @@ private enum BoardSlot: Identifiable {
 struct DayCardSlot: Equatable {
     var id: String
     var frame: CGRect
+}
+
+enum ItemArrow {
+    /// Adaptive grid column count for the day view. Width includes the grid's outer padding.
+    static func columns(fitting width: CGFloat, minimum: CGFloat = 260, spacing: CGFloat = 12, padding: CGFloat = 32) -> Int {
+        let inner = max(0, width - padding)
+        guard inner > 0 else { return 1 }
+        return max(1, Int((inner + spacing) / (minimum + spacing)))
+    }
+
+    static func listIndex(current: Int?, count: Int, delta: Int) -> Int? {
+        guard count > 0, delta != 0 else { return nil }
+        guard let current, current >= 0, current < count else {
+            return delta < 0 ? count - 1 : 0
+        }
+        let next = current + delta
+        guard next >= 0, next < count else { return current }
+        return next
+    }
+
+    static func gridIndex(current: Int?, count: Int, columns: Int, horizontal: Int, vertical: Int) -> Int? {
+        guard count > 0 else { return nil }
+        let columns = max(columns, 1)
+        guard let current, current >= 0, current < count else {
+            if horizontal < 0 || vertical < 0 { return count - 1 }
+            return 0
+        }
+        let row = current / columns
+        let col = current % columns
+        let rowCount = (count + columns - 1) / columns
+        if horizontal != 0 {
+            var newRow = row
+            var newCol = col + horizontal
+            if newCol < 0 {
+                guard row > 0 else { return current }
+                newRow = row - 1
+                let rowLength = min(columns, count - newRow * columns)
+                newCol = rowLength - 1
+            } else {
+                let rowLength = min(columns, count - row * columns)
+                if newCol >= rowLength {
+                    guard row + 1 < rowCount else { return current }
+                    newRow = row + 1
+                    newCol = 0
+                }
+            }
+            return newRow * columns + newCol
+        }
+        if vertical != 0 {
+            let newRow = row + vertical
+            guard newRow >= 0, newRow < rowCount else { return current }
+            let rowLength = min(columns, count - newRow * columns)
+            let newCol = min(col, rowLength - 1)
+            return newRow * columns + newCol
+        }
+        return current
+    }
 }
 
 enum DayDragLayout {

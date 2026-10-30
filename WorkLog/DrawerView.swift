@@ -8,66 +8,143 @@ private struct PopupKey: PreferenceKey {
     }
 }
 
-private struct TextEditorInset: NSViewRepresentable {
-    var inset: NSSize
+private enum FieldMetrics {
+    static let fontSize: CGFloat = 13
+    static let inset: CGFloat = 8
+    static var font: NSFont { .systemFont(ofSize: fontSize) }
+    static var placeholderColor: NSColor { NSColor(srgbRed: 0.557, green: 0.557, blue: 0.576, alpha: 1) }
+}
 
-    func makeNSView(context: Context) -> Probe {
-        Probe(inset: inset)
+private struct NoteEditor: NSViewRepresentable {
+    @Binding var text: String
+    var placeholder: String
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? nsView.fittingSize.width, height: proposal.height ?? 88)
     }
 
-    func updateNSView(_ nsView: Probe, context: Context) {
-        nsView.inset = inset
-        nsView.apply()
+    func makeNSView(context: Context) -> NSScrollView {
+        let textView = NoteTextView.make(frame: NSRect(x: 0, y: 0, width: 300, height: 88))
+        textView.placeholder = placeholder
+        textView.string = text
+        textView.delegate = context.coordinator
+        let scroll = NoteScrollView()
+        scroll.drawsBackground = false
+        scroll.borderType = .noBorder
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.scrollerStyle = .overlay
+        scroll.focusRingType = .none
+        scroll.documentView = textView
+        scroll.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        scroll.setContentHuggingPriority(.defaultLow, for: .vertical)
+        scroll.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        return scroll
     }
 
-    final class Probe: NSView {
-        var inset: NSSize
+    func updateNSView(_ scroll: NSScrollView, context: Context) {
+        context.coordinator.parent = self
+        guard let textView = scroll.documentView as? NoteTextView else { return }
+        textView.placeholder = placeholder
+        guard textView.hasMarkedText() == false, textView.string != text else { return }
+        textView.string = text
+    }
 
-        init(inset: NSSize) {
-            self.inset = inset
-            super.init(frame: .zero)
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var parent: NoteEditor
+
+        init(_ parent: NoteEditor) { self.parent = parent }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            if textView.hasMarkedText() { return }
+            if textView.string != parent.text { parent.text = textView.string }
         }
+    }
+}
 
-        required init?(coder: NSCoder) { nil }
+private final class NoteScrollView: NSScrollView {
+    override func layout() {
+        super.layout()
+        guard let textView = documentView as? NoteTextView else { return }
+        let visible = contentSize
+        let width = max(visible.width, 1)
+        let height = max(textView.frame.height, visible.height)
+        textView.minSize = NSSize(width: 0, height: visible.height)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        guard abs(textView.frame.width - width) > 0.5 || textView.frame.height + 0.5 < height else { return }
+        textView.setFrameSize(NSSize(width: width, height: height))
+    }
+}
 
-        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+private final class NoteTextView: NSTextView {
+    var placeholder = ""
 
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            apply()
+    static func make(frame: NSRect) -> NoteTextView {
+        let container = NSTextContainer(size: NSSize(width: max(frame.width, 1), height: CGFloat.greatestFiniteMagnitude))
+        container.widthTracksTextView = true
+        container.lineFragmentPadding = 0
+        let manager = NSLayoutManager()
+        manager.addTextContainer(container)
+        let storage = NSTextStorage()
+        storage.addLayoutManager(manager)
+        return NoteTextView(frame: frame, textContainer: container)
+    }
+
+    override init(frame frameRect: NSRect, textContainer container: NSTextContainer?) {
+        super.init(frame: frameRect, textContainer: container)
+        isRichText = false
+        importsGraphics = false
+        isEditable = true
+        isSelectable = true
+        drawsBackground = false
+        focusRingType = .none
+        usesFontPanel = false
+        isVerticallyResizable = true
+        isHorizontallyResizable = false
+        autoresizingMask = [.width]
+        textContainer?.widthTracksTextView = true
+        textContainer?.heightTracksTextView = false
+        lockMetrics()
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        lockMetrics()
+        return accepted
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard string.isEmpty, placeholder.isEmpty == false else { return }
+        let font = self.font ?? FieldMetrics.font
+        let inset = textContainerInset
+        let padding = textContainer?.lineFragmentPadding ?? 0
+        let rect = NSRect(
+            x: inset.width + padding,
+            y: inset.height,
+            width: max(0, bounds.width - inset.width * 2 - padding),
+            height: ceil(font.boundingRectForFont.height)
+        )
+        placeholder.draw(in: rect, withAttributes: [
+            .font: font,
+            .foregroundColor: FieldMetrics.placeholderColor
+        ])
+    }
+
+    private func lockMetrics() {
+        let font = FieldMetrics.font
+        let inset = NSSize(width: FieldMetrics.inset, height: FieldMetrics.inset)
+        if self.font?.pointSize != FieldMetrics.fontSize { self.font = font }
+        if (typingAttributes[.font] as? NSFont)?.pointSize != FieldMetrics.fontSize {
+            typingAttributes[.font] = font
         }
-
-        override func layout() {
-            super.layout()
-            apply()
-        }
-
-        func apply() {
-            guard let textView = Self.nearestTextView(from: self) else { return }
-            if textView.textContainer?.lineFragmentPadding != 0 {
-                textView.textContainer?.lineFragmentPadding = 0
-            }
-            if textView.textContainerInset != inset {
-                textView.textContainerInset = inset
-            }
-        }
-
-        private static func nearestTextView(from view: NSView) -> NSTextView? {
-            var node = view.superview
-            while let current = node {
-                if let found = findTextView(in: current) { return found }
-                node = current.superview
-            }
-            return nil
-        }
-
-        private static func findTextView(in view: NSView) -> NSTextView? {
-            if let textView = view as? NSTextView { return textView }
-            for child in view.subviews {
-                if let found = findTextView(in: child) { return found }
-            }
-            return nil
-        }
+        if textContainerInset != inset { textContainerInset = inset }
+        if textContainer?.lineFragmentPadding != 0 { textContainer?.lineFragmentPadding = 0 }
     }
 }
 
@@ -404,23 +481,10 @@ struct DrawerOverlay: View {
             }
             flatTypes
             WorkField(title: "备注") {
-                ZStack(alignment: .topLeading) {
-                    TextEditor(text: noteBinding)
-                        .font(.system(size: 13))
-                        .scrollContentBackground(.hidden)
-                        .background(TextEditorInset(inset: NSSize(width: 8, height: 8)))
-                    if model.draft?.note.isEmpty != false {
-                        Text("选填")
-                            .font(.system(size: 13))
-                            .foregroundStyle(WorkColor.tertiary)
-                            .padding(.leading, 8)
-                            .padding(.top, 8)
-                            .allowsHitTesting(false)
-                    }
-                }
-                .frame(height: 88)
-                .background(Color.white, in: RoundedRectangle(cornerRadius: 7))
-                .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color(red: 0.867, green: 0.839, blue: 0.796)))
+                NoteEditor(text: noteBinding, placeholder: "选填")
+                    .frame(height: 88)
+                    .background(Color.white, in: RoundedRectangle(cornerRadius: 7))
+                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color(red: 0.867, green: 0.839, blue: 0.796)))
             }
             HStack {
                 Spacer()

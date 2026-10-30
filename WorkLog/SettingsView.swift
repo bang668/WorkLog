@@ -146,6 +146,7 @@ struct SettingsView: View {
         .animation(.easeOut(duration: 0.18), value: toast)
         .background(WorkColor.card)
         .background(WindowReader { subtypeHover.window = $0 })
+        .background(SettingsModalLock())
         .onAppear {
             refreshLaunch()
             subtypeHover.open = { subtypeDialog = $0 }
@@ -166,18 +167,6 @@ struct SettingsView: View {
     private var generalPage: some View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("编辑方式")
-                    .font(.system(size: 13, weight: .semibold))
-                Text("记在这台 Mac 上。")
-                    .font(.system(size: 13))
-                    .foregroundStyle(WorkColor.secondary)
-                HStack(spacing: 8) {
-                    ForEach(EditorKind.allCases) { kind in
-                        choice(kind)
-                    }
-                }
-            }
-            VStack(alignment: .leading, spacing: 8) {
                 Text("开机启动")
                     .font(.system(size: 13, weight: .semibold))
                 HStack(alignment: .center, spacing: 12) {
@@ -197,6 +186,18 @@ struct SettingsView: View {
                 .padding(12)
                 .background(Color.white, in: RoundedRectangle(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(WorkColor.line))
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                Text("编辑方式")
+                    .font(.system(size: 13, weight: .semibold))
+                Text("记在这台 Mac 上。")
+                    .font(.system(size: 13))
+                    .foregroundStyle(WorkColor.secondary)
+                HStack(spacing: 8) {
+                    ForEach(EditorKind.allCases) { kind in
+                        choice(kind)
+                    }
+                }
             }
             Spacer(minLength: 0)
         }
@@ -253,24 +254,45 @@ struct SettingsView: View {
     }
 
     private var aboutPage: some View {
-        VStack(spacing: 6) {
-            Text("WorkLog")
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(WorkColor.ink)
-            Text("版本 \(appVersion)")
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
+            VStack(spacing: 6) {
+                Text("WorkLog")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(WorkColor.ink)
+                Text("版本 \(appVersion)")
+                    .font(.system(size: 13))
+                    .foregroundStyle(WorkColor.secondary)
+                Text("记在这台 Mac 上的工作日志。")
+                    .font(.system(size: 13))
+                    .foregroundStyle(WorkColor.secondary)
+                    .padding(.top, 8)
+            }
+            .multilineTextAlignment(.center)
+            Spacer(minLength: 0)
+            Button {
+                NSWorkspace.shared.open(URL(string: "https://github.com/bang668/WorkLog")!)
+            } label: {
+                HStack(spacing: 3) {
+                    Text("项目主页")
+                        .underline()
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 11, weight: .semibold))
+                }
                 .font(.system(size: 13))
-                .foregroundStyle(WorkColor.secondary)
-            Text("记在这台 Mac 上的工作日志。")
-                .font(.system(size: 13))
-                .foregroundStyle(WorkColor.secondary)
-                .padding(.top, 8)
+                .foregroundStyle(WorkColor.blue)
+            }
+            .buttonStyle(.plain)
+            .onHover { inside in
+                if inside { NSCursor.pointingHand.set() } else { NSCursor.arrow.set() }
+            }
+            .padding(.bottom, 22)
         }
-        .multilineTextAlignment(.center)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var appVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.2"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.3"
     }
 
     private var launchBinding: Binding<Bool> {
@@ -902,6 +924,49 @@ private struct WindowReader: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSView, context: Context) {
         DispatchQueue.main.async { onWindow(nsView.window) }
+    }
+}
+
+/// Keeps Settings above the main window and blocks the main window until Settings closes.
+private struct SettingsModalLock: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { ModalLockView() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
+private final class ModalLockView: NSView {
+    private var modal = false
+    private var observer: NSObjectProtocol?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard let window else {
+            endModal()
+            return
+        }
+        window.level = .modalPanel
+        guard modal == false else { return }
+        modal = true
+        observer = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            self?.endModal()
+        }
+        DispatchQueue.main.async { [weak self, weak window] in
+            guard let self, let window, self.modal, window.isVisible else { return }
+            NSApp.runModal(for: window)
+        }
+    }
+
+    private func endModal() {
+        guard modal else { return }
+        modal = false
+        if let observer {
+            NotificationCenter.default.removeObserver(observer)
+            self.observer = nil
+        }
+        NSApp.stopModal()
     }
 }
 

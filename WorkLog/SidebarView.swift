@@ -72,7 +72,7 @@ struct SidebarView: View {
                             .padding(.leading, 28)
                             .padding(.trailing, 8)
                             .background(
-                                WorkCalendar.monthKey(fromDay: model.selectedDay) == month && model.mode == .month
+                                WorkCalendar.monthKey(fromDay: model.selectedDay) == month
                                     ? Color.white
                                     : Color.white.opacity(0.001),
                                 in: RoundedRectangle(cornerRadius: 6)

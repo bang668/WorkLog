@@ -81,8 +81,8 @@ struct BottomInspector: View {
 
     /// Date label, date, weekday, and one row of type tags, plus the card padding.
     private static let cardMinHeight: CGFloat = 110
-    /// Fixed description column. Tune by eye; 280 is the current trial width.
-    private static let descriptionWidth: CGFloat = 280
+    /// Fixed description column in the bottom item view.
+    private static let descriptionWidth: CGFloat = 270
 
     var body: some View {
         Group {
@@ -99,6 +99,7 @@ struct BottomInspector: View {
                         .frame(minHeight: 22, alignment: .leading)
                     }
                     .fixedSize(horizontal: true, vertical: false)
+                    .frame(minWidth: 170, alignment: .leading)
                     block("描述", flexible: false) {
                         FixedDescription(text: item.description, width: Self.descriptionWidth)
                     }

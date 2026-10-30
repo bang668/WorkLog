@@ -43,6 +43,9 @@ struct MainCanvas: View {
         .onChange(of: model.selectedDay) { _, _ in model.loadMonths(for: visibleDays) }
         .onChange(of: model.mode) { _, mode in
             if mode == .day { model.clearPasteDay() }
+            if mode == .day || mode == .week {
+                model.expandedYears.insert(String(model.selectedDay.prefix(4)))
+            }
             model.loadMonths(for: visibleDays)
         }
     }

@@ -300,4 +300,20 @@ final class WorkLogTests: XCTestCase {
             DayDragLayout.landingID(pointer: CGPoint(x: origin.x, y: origin.y + 48 + 180), origin: origin, slots: slots, draggingID: "d")
         )
     }
+
+    func testArrowKeysMoveDaysItemsAndDayGrid() {
+        XCTAssertEqual(ItemArrow.listIndex(current: nil, count: 3, delta: 1), 0)
+        XCTAssertEqual(ItemArrow.listIndex(current: nil, count: 3, delta: -1), 2)
+        XCTAssertEqual(ItemArrow.listIndex(current: 1, count: 3, delta: 1), 2)
+        XCTAssertEqual(ItemArrow.listIndex(current: 2, count: 3, delta: 1), 2)
+        XCTAssertEqual(ItemArrow.listIndex(current: 0, count: 3, delta: -1), 0)
+
+        XCTAssertEqual(ItemArrow.columns(fitting: 800), 2)
+        XCTAssertEqual(ItemArrow.gridIndex(current: nil, count: 5, columns: 2, horizontal: 1, vertical: 0), 0)
+        XCTAssertEqual(ItemArrow.gridIndex(current: 0, count: 5, columns: 2, horizontal: 1, vertical: 0), 1)
+        XCTAssertEqual(ItemArrow.gridIndex(current: 1, count: 5, columns: 2, horizontal: 1, vertical: 0), 2)
+        XCTAssertEqual(ItemArrow.gridIndex(current: 1, count: 5, columns: 2, horizontal: 0, vertical: 1), 3)
+        XCTAssertEqual(ItemArrow.gridIndex(current: 1, count: 5, columns: 2, horizontal: 0, vertical: -1), 1)
+        XCTAssertEqual(ItemArrow.gridIndex(current: 3, count: 5, columns: 2, horizontal: 0, vertical: 1), 4)
+    }
 }

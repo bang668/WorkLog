@@ -177,5 +177,6 @@ private struct WindowChrome: NSViewRepresentable {
         window.styleMask.insert(.fullSizeContentView)
         window.isMovableByWindowBackground = true
         window.backgroundColor = NSColor(srgbRed: 0.953, green: 0.945, blue: 0.925, alpha: 1)
+        window.identifier = NSUserInterfaceItemIdentifier("worklog.main")
     }
 }

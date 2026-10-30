@@ -199,13 +199,13 @@ final class AppModel {
         }
     }
 
-    func go(to day: String, keepPicker: Bool = false, forPaste: Bool = false) {
+    func go(to day: String, keepPicker: Bool = false, forPaste: Bool = false, clearItem: Bool = false) {
         let apply = {
             self.selectedDay = day
             self.pickerMonth = WorkCalendar.monthKey(fromDay: day)
             self.ensureMonth(WorkCalendar.monthKey(fromDay: day))
             if !keepPicker { self.activePicker = nil }
-            if self.editorKind == .dialog, self.draft == nil {
+            if clearItem || (self.editorKind == .dialog && self.draft == nil) {
                 self.selectedItemID = nil
             }
             if forPaste {
@@ -459,6 +459,71 @@ final class AppModel {
     var draggingItemID: String?
     var itemDragPreview: ItemDragPreview?
     var itemHeights: [String: CGFloat] = [:]
+    var dayGridColumns = 1
+
+    func noteDayGridColumns(_ count: Int) {
+        let next = max(count, 1)
+        guard dayGridColumns != next else { return }
+        dayGridColumns = next
+    }
+
+    /// Arrow keys. Returns true when the event should not reach a scroll view.
+    func handleArrow(_ event: NSEvent) -> Bool {
+        guard event.window?.identifier?.rawValue == "worklog.main" else { return false }
+        guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { return false }
+        if activePicker != nil { return false }
+        if let draft, draft.purpose != .view { return false }
+        if event.window?.firstResponder is NSTextView { return false }
+        let horizontal: Int
+        let vertical: Int
+        switch event.keyCode {
+        case 123: horizontal = -1; vertical = 0
+        case 124: horizontal = 1; vertical = 0
+        case 125: horizontal = 0; vertical = 1
+        case 126: horizontal = 0; vertical = -1
+        default: return false
+        }
+        if mode == .day {
+            moveDayGrid(horizontal: horizontal, vertical: vertical)
+        } else if horizontal != 0 {
+            moveSelectedDay(by: horizontal)
+        } else {
+            moveItems(by: vertical)
+        }
+        return true
+    }
+
+    func moveSelectedDay(by direction: Int) {
+        guard let day = WorkCalendar.shiftingDay(selectedDay, by: direction) else { return }
+        holdPasteSelection()
+        go(to: day, forPaste: true, clearItem: true)
+    }
+
+    func moveItems(by delta: Int) {
+        let list = items(on: selectedDay)
+        let current = list.firstIndex { $0.id == selectedItemID }
+        guard let index = ItemArrow.listIndex(current: current, count: list.count, delta: delta) else { return }
+        focusItem(list[index])
+    }
+
+    func moveDayGrid(horizontal: Int, vertical: Int) {
+        let list = items(on: selectedDay)
+        let current = list.firstIndex { $0.id == selectedItemID }
+        guard let index = ItemArrow.gridIndex(
+            current: current,
+            count: list.count,
+            columns: dayGridColumns,
+            horizontal: horizontal,
+            vertical: vertical
+        ) else { return }
+        focusItem(list[index])
+    }
+
+    private func focusItem(_ item: WorkItem) {
+        selectedItemID = item.id
+        selectedDay = item.date
+        if mode != .day { pasteDay = item.date }
+    }
 
     func noteItemHeights(_ heights: [String: CGFloat]) {
         for (id, height) in heights {
@@ -1088,6 +1153,12 @@ final class AppRuntime: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSWindow.allowsAutomaticWindowTabbing = false
         MenuSlimmer.shared.install()
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            let handled = MainActor.assumeIsolated {
+                self?.model?.handleArrow(event) ?? false
+            }
+            return handled ? nil : event
+        }
     }
 
     func applicationWillUpdate(_ notification: Notification) {
