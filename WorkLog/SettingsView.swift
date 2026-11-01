@@ -101,6 +101,7 @@ struct SettingsView: View {
     @State private var launchNeedsApproval = false
     @State private var subtypeDialog: SubtypeDialogRequest?
     @State private var subtypeHover = SubtypeHover()
+    @State private var recordingHotKey = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -153,12 +154,14 @@ struct SettingsView: View {
             subtypeHover.start()
         }
         .onChange(of: tab) { _, newValue in
+            stopHotKeyRecording()
             subtypeDialog = nil
             guard newValue != 1 else { return }
             drag = nil
             flushTypeDrafts()
         }
         .onDisappear {
+            stopHotKeyRecording()
             subtypeHover.stop()
             flushTypeDrafts()
         }
@@ -186,6 +189,66 @@ struct SettingsView: View {
                 .padding(12)
                 .background(Color.white, in: RoundedRectangle(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(WorkColor.line))
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                Text("全局快捷键")
+                    .font(.system(size: 13, weight: .semibold))
+                HStack(alignment: .center, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("唤起添加")
+                            .font(.system(size: 13))
+                        Text("开着时全局可用。组合键，或双击 ⌃⌥⌘。")
+                            .font(.system(size: 12))
+                            .foregroundStyle(WorkColor.secondary)
+                    }
+                    Spacer(minLength: 8)
+                    if model.quickHotKey != nil, recordingHotKey == false {
+                        Button("清除") { _ = model.setQuickHotKey(nil) }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 12))
+                            .foregroundStyle(WorkColor.secondary)
+                    }
+                    Button(recordingHotKey ? "请按下快捷键" : (model.quickHotKey?.label ?? "点按以设置")) {
+                        if recordingHotKey {
+                            stopHotKeyRecording()
+                        } else {
+                            recordingHotKey = true
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 13))
+                    .foregroundStyle(recordingHotKey ? WorkColor.blue : WorkColor.ink)
+                    .padding(.horizontal, 10)
+                    .frame(height: 28)
+                    .background(Color.white, in: RoundedRectangle(cornerRadius: 7))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7)
+                            .stroke(recordingHotKey ? WorkColor.blue.opacity(0.45) : WorkColor.line)
+                    )
+                }
+                .padding(12)
+                .background(Color.white, in: RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(WorkColor.line))
+                .background(HotKeyCatcher(active: recordingHotKey, onKey: { code, flags in
+                    takeHotKey(code: code, flags: flags)
+                }, onDoubleTap: { kind in
+                    takeHotKey(QuickHotKey.doubleTap(kind))
+                }))
+                .onChange(of: recordingHotKey) { _, recording in
+                    if recording { _ = QuickHotKeyCenter.shared.install(nil) }
+                }
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                Text("下拉弹窗")
+                    .font(.system(size: 13, weight: .semibold))
+                Text("快捷键唤起的添加窗口。记在这台 Mac 上。")
+                    .font(.system(size: 13))
+                    .foregroundStyle(WorkColor.secondary)
+                HStack(spacing: 8) {
+                    ForEach(QuickAppearance.allCases) { appearance in
+                        appearanceChoice(appearance)
+                    }
+                }
             }
             VStack(alignment: .leading, spacing: 8) {
                 Text("编辑方式")
@@ -292,7 +355,7 @@ struct SettingsView: View {
     }
 
     private var appVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.3"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.4"
     }
 
     private var launchBinding: Binding<Bool> {
@@ -319,6 +382,29 @@ struct SettingsView: View {
             showToast("开机启动没有改成。")
         }
         refreshLaunch()
+    }
+
+    private func appearanceChoice(_ appearance: QuickAppearance) -> some View {
+        let on = model.quickAppearance == appearance
+        return Button {
+            model.quickAppearance = appearance
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: on ? "circle.inset.filled" : "circle")
+                    .font(.system(size: 10))
+                    .foregroundStyle(on ? WorkColor.blue : WorkColor.tertiary)
+                Text(appearance.title)
+                    .font(.system(size: 13, weight: .semibold))
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 34)
+            .background(on ? Color(red: 0.957, green: 0.976, blue: 1) : Color.white, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(on ? WorkColor.blue : WorkColor.line, lineWidth: on ? 1.5 : 1)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private func choice(_ kind: EditorKind) -> some View {
@@ -809,6 +895,41 @@ struct SettingsView: View {
         return false
     }
 
+    private func stopHotKeyRecording() {
+        guard recordingHotKey else { return }
+        recordingHotKey = false
+        _ = QuickHotKeyCenter.shared.install(model.quickHotKey)
+    }
+
+    private func takeHotKey(code: UInt16, flags: NSEvent.ModifierFlags) {
+        guard recordingHotKey else { return }
+        if code == 53 {
+            stopHotKeyRecording()
+            return
+        }
+        if code == 51 || code == 117 {
+            recordingHotKey = false
+            _ = model.setQuickHotKey(nil)
+            return
+        }
+        let hotKey = QuickHotKey(keyCode: code, flags: flags)
+        guard hotKey.isRegisterable else { return }
+        takeHotKey(hotKey)
+    }
+
+    private func takeHotKey(_ hotKey: QuickHotKey) {
+        guard recordingHotKey else { return }
+        if model.setQuickHotKey(hotKey) {
+            recordingHotKey = false
+            if model.quickHotKeyError.isEmpty == false {
+                showToast(model.quickHotKeyError)
+            }
+        } else {
+            _ = QuickHotKeyCenter.shared.install(nil)
+            showToast(model.quickHotKeyError.isEmpty ? "这个快捷键已经被占用" : model.quickHotKeyError)
+        }
+    }
+
     private func showToast(_ message: String) {
         toastNonce += 1
         let nonce = toastNonce
@@ -955,6 +1076,10 @@ private final class ModalLockView: NSView {
         }
         DispatchQueue.main.async { [weak self, weak window] in
             guard let self, let window, self.modal, window.isVisible else { return }
+            if QuickAddPanel.shared.isShowing {
+                window.close()
+                return
+            }
             NSApp.runModal(for: window)
         }
     }
@@ -1026,6 +1151,89 @@ private struct SubtypeNameDialog: View {
             guard initialName.isEmpty == false else { return }
             DispatchQueue.main.async {
                 (NSApp.keyWindow?.firstResponder as? NSTextView)?.selectAll(nil)
+            }
+        }
+    }
+}
+
+private struct HotKeyCatcher: NSViewRepresentable {
+    var active: Bool
+    var onKey: (UInt16, NSEvent.ModifierFlags) -> Void
+    var onDoubleTap: (DoubleModifierKind) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> NSView {
+        context.coordinator.install()
+        return NSView()
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        if active, context.coordinator.active == false {
+            context.coordinator.detector.reset()
+            context.coordinator.lastFlags = []
+        }
+        context.coordinator.active = active
+        context.coordinator.onKey = onKey
+        context.coordinator.onDoubleTap = onDoubleTap
+    }
+
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        coordinator.remove()
+    }
+
+    final class Coordinator {
+        var active = false
+        var onKey: (UInt16, NSEvent.ModifierFlags) -> Void = { _, _ in }
+        var onDoubleTap: (DoubleModifierKind) -> Void = { _ in }
+        var detector = DoubleModifierTapDetector(interval: NSEvent.doubleClickInterval)
+        var lastFlags: NSEvent.ModifierFlags = []
+        private var monitor: Any?
+
+        func install() {
+            guard monitor == nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
+                guard let self else { return event }
+                let type = event.type
+                let code = event.keyCode
+                let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+                let consume = MainActor.assumeIsolated { () -> Bool in
+                    guard self.active else { return false }
+                    if type == .flagsChanged {
+                        self.handleFlags(code: code, flags: flags)
+                        return false
+                    }
+                    if DoubleModifierKind.isModifierKey(code) {
+                        return true
+                    }
+                    _ = self.detector.handle(.otherKey)
+                    self.onKey(code, flags)
+                    return true
+                }
+                return consume ? nil : event
+            }
+        }
+
+        func remove() {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
+        }
+
+        private func handleFlags(code: UInt16, flags: NSEvent.ModifierFlags) {
+            guard let kind = DoubleModifierKind.from(keyCode: code) else {
+                _ = detector.handle(.otherKey)
+                lastFlags = flags.intersection([.control, .option, .command, .shift])
+                return
+            }
+            let nowDown = flags.contains(kind.flag)
+            let wasDown = lastFlags.contains(kind.flag)
+            lastFlags = flags.intersection([.control, .option, .command, .shift])
+            if nowDown && !wasDown {
+                _ = detector.handle(.modifierDown(kind))
+            } else if !nowDown && wasDown {
+                if let fired = detector.handle(.modifierUp(kind)) {
+                    onDoubleTap(fired)
+                }
             }
         }
     }

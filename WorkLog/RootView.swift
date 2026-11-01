@@ -28,7 +28,7 @@ struct RootView: View {
         }
         .background(WorkColor.paper)
         .alert(model.alertTitle ?? "", isPresented: alertPresented) {
-            Button("好") { model.alertTitle = nil }
+            Button("好") { model.dismissAlert() }
         } message: {
             Text(model.alertMessage ?? "")
         }
@@ -92,7 +92,7 @@ struct RootView: View {
     }
 
     private var alertPresented: Binding<Bool> {
-        Binding(get: { model.alertTitle != nil }, set: { if !$0 { model.alertTitle = nil } })
+        Binding(get: { model.alertTitle != nil }, set: { if !$0 { model.dismissAlert() } })
     }
 
     private var confirmPresented: Binding<Bool> {

@@ -24,6 +24,8 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+	<key>NSAccessibilityUsageDescription</key>
+	<string>双击 ⌃、⌥ 或 ⌘ 唤起添加窗口时，需要辅助功能权限才能在其他软件里收到按键。</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSPrincipalClass</key>

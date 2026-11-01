@@ -306,6 +306,7 @@ struct DayPicker: View {
     @Binding var month: String
     var selectedDay: String
     var onSelect: (String) -> Void
+    @Environment(\.workNight) private var night
 
     var body: some View {
         WorkMenuCard(width: 292, padding: 8) {
@@ -320,6 +321,7 @@ struct DayPicker: View {
                 Spacer(minLength: 0)
                 Text(WorkCalendar.chineseYearMonth(month))
                     .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(night ? Color.white : WorkColor.ink)
                 Spacer(minLength: 0)
                 MenuChevron(name: "chevron.right") { shiftMonth(1) }
             }
@@ -328,7 +330,7 @@ struct DayPicker: View {
                 ForEach(WorkCalendar.weekdaySymbols, id: \.self) { symbol in
                     Text(String(symbol.suffix(1)))
                         .font(.system(size: 11))
-                        .foregroundStyle(WorkColor.secondary)
+                        .foregroundStyle(night ? Color(white: 0.55) : WorkColor.secondary)
                         .frame(maxWidth: .infinity)
                 }
                 ForEach(weeks.flatMap { $0 }, id: \.self) { day in
@@ -351,14 +353,15 @@ private struct MenuChevron: View {
     let name: String
     let action: () -> Void
     @State private var hovering = false
+    @Environment(\.workNight) private var night
 
     var body: some View {
         Button(action: action) {
             Image(systemName: name)
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(hovering ? WorkColor.ink : WorkColor.secondary)
+                .foregroundStyle(hovering ? (night ? Color.white : WorkColor.ink) : (night ? Color(white: 0.62) : WorkColor.secondary))
                 .frame(width: 28, height: 28)
-                .background(hovering ? Color.black.opacity(0.05) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+                .background(hovering ? (night ? Color.white.opacity(0.08) : Color.black.opacity(0.05)) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -373,6 +376,7 @@ private struct DayMenuCell: View {
     let selected: Bool
     let action: () -> Void
     @State private var hovering = false
+    @Environment(\.workNight) private var night
 
     var body: some View {
         let inside = WorkCalendar.monthKey(fromDay: day) == month
@@ -381,7 +385,7 @@ private struct DayMenuCell: View {
                 .font(.system(size: 12, weight: selected ? .semibold : .regular))
                 .frame(maxWidth: .infinity, minHeight: 28)
                 .background(fill, in: RoundedRectangle(cornerRadius: 6))
-                .foregroundStyle(selected ? Color.white : (inside ? WorkColor.ink : WorkColor.secondary))
+                .foregroundStyle(selected ? Color.white : (inside ? (night ? Color.white : WorkColor.ink) : (night ? Color(white: 0.45) : WorkColor.secondary)))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -391,7 +395,7 @@ private struct DayMenuCell: View {
 
     private var fill: Color {
         if selected { return WorkColor.blue }
-        if hovering { return Color.black.opacity(0.05) }
+        if hovering { return night ? Color.white.opacity(0.08) : Color.black.opacity(0.05) }
         return Color.clear
     }
 }

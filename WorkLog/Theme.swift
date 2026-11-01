@@ -1,5 +1,16 @@
 import SwiftUI
 
+private struct WorkNightKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var workNight: Bool {
+        get { self[WorkNightKey.self] }
+        set { self[WorkNightKey.self] = newValue }
+    }
+}
+
 enum WorkColor {
     static let paper = Color(red: 0.953, green: 0.945, blue: 0.925)
     static let chip = Color(red: 0.981, green: 0.971, blue: 0.954)
@@ -16,16 +27,36 @@ enum WorkColor {
 
 struct WorkButtonStyle: ButtonStyle {
     var prominent = false
+    var focused = false
 
     func makeBody(configuration: Configuration) -> some View {
+        WorkButtonBody(configuration: configuration, prominent: prominent, focused: focused)
+    }
+}
+
+private struct WorkButtonBody: View {
+    let configuration: ButtonStyleConfiguration
+    var prominent: Bool
+    var focused: Bool
+    @Environment(\.workNight) private var night
+
+    var body: some View {
         configuration.label
             .font(.system(size: 13, weight: prominent ? .semibold : .regular))
             .padding(.horizontal, 12)
             .frame(height: 28)
-            .background(prominent ? WorkColor.blue : Color.white, in: RoundedRectangle(cornerRadius: 7))
-            .foregroundStyle(prominent ? Color.white : WorkColor.ink)
-            .overlay(RoundedRectangle(cornerRadius: 7).stroke(prominent ? Color.clear : WorkColor.line))
+            .background(fill, in: RoundedRectangle(cornerRadius: 7))
+            .foregroundStyle(prominent || night ? Color.white : WorkColor.ink)
+            .overlay(RoundedRectangle(cornerRadius: 7).stroke(prominent ? Color.clear : (night ? Color.white.opacity(0.16) : WorkColor.line)))
+            .shadow(color: focused ? (prominent ? Color(red: 0, green: 0.25, blue: 0.65).opacity(0.45) : Color.black.opacity(0.16)) : .clear, radius: focused ? 4 : 0)
             .opacity(configuration.isPressed ? 0.75 : 1)
+    }
+
+    private var fill: Color {
+        if prominent && focused { return Color(red: 0, green: 0.28, blue: 0.68) }
+        if prominent { return WorkColor.blue }
+        if focused { return night ? Color(white: 0.36) : Color(red: 0.90, green: 0.875, blue: 0.84) }
+        return night ? Color(white: 0.28) : Color.white
     }
 }
 
@@ -80,16 +111,19 @@ struct FillHitButtonStyle: ButtonStyle {
 struct WorkMenuCard<Content: View>: View {
     var width: CGFloat? = nil
     var padding: CGFloat = 4
+    var shadowed = true
     @ViewBuilder var content: Content
+
+    @Environment(\.workNight) private var night
 
     var body: some View {
         content
             .padding(padding)
             .frame(maxWidth: width == nil ? .infinity : nil)
             .frame(width: width)
-            .background(Color.white, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(WorkColor.line))
-            .shadow(color: .black.opacity(0.12), radius: 12, y: 6)
+            .background(night ? Color(white: 0.12) : Color.white, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(night ? Color.white.opacity(0.14) : WorkColor.line))
+            .shadow(color: shadowed ? Color.black.opacity(0.12) : .clear, radius: shadowed ? 12 : 0, y: shadowed ? 6 : 0)
     }
 }
 
@@ -126,6 +160,10 @@ private struct MenuFit<Content: View>: View {
                     guard let scrollToID else { return }
                     proxy.scrollTo(scrollToID, anchor: .center)
                 }
+                .onChange(of: scrollToID) { _, id in
+                    guard let id else { return }
+                    proxy.scrollTo(id, anchor: .center)
+                }
             }
         }
     }
@@ -157,12 +195,13 @@ struct WorkMenuRow: View {
     var selected = false
     let action: () -> Void
     @State private var hovering = false
+    @Environment(\.workNight) private var night
 
     var body: some View {
         Button(action: action) {
             Text(title)
                 .font(.system(size: 13))
-                .foregroundStyle(WorkColor.ink)
+                .foregroundStyle(night && selected == false ? Color.white : WorkColor.ink)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 6)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -176,7 +215,7 @@ struct WorkMenuRow: View {
 
     private var fill: Color {
         if selected { return WorkColor.blueSoft }
-        if hovering { return Color.black.opacity(0.05) }
+        if hovering { return night ? Color.white.opacity(0.08) : Color.black.opacity(0.05) }
         return Color.clear
     }
 }
@@ -184,12 +223,13 @@ struct WorkMenuRow: View {
 struct WorkField<Content: View>: View {
     let title: String
     @ViewBuilder var content: Content
+    @Environment(\.workNight) private var night
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
                 .font(.system(size: 11))
-                .foregroundStyle(WorkColor.secondary)
+                .foregroundStyle(night ? Color(white: 0.62) : WorkColor.secondary)
             content
         }
     }

@@ -1,0 +1,7 @@
+// Debug builds default to an ad-hoc signature. That signature changes on every
+// rebuild, and macOS then forgets the Accessibility permission used by a
+// double-tap shortcut. Signing.local.xcconfig can pin a stable identity.
+CODE_SIGN_STYLE = Manual
+CODE_SIGN_IDENTITY = -
+
+#include? "Signing.local.xcconfig"

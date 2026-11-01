@@ -14,7 +14,6 @@ extension FocusedValues {
 @main
 struct WorkLogApp: App {
     @NSApplicationDelegateAdaptor(AppRuntime.self) private var appRuntime
-    @FocusedValue(\.worklogFieldEditing) private var fieldEditing
     @State private var model: AppModel
 
     init() {
@@ -27,7 +26,12 @@ struct WorkLogApp: App {
                 .environment(model)
                 .frame(minWidth: 960, minHeight: 640)
                 .background(WindowChrome())
-                .onAppear { appRuntime.model = model }
+                .onAppear {
+                    appRuntime.model = model
+                    AppRuntime.current = appRuntime
+                    model.installQuickHotKey = { QuickHotKeyCenter.shared.install($0) }
+                    _ = QuickHotKeyCenter.shared.install(model.quickHotKey)
+                }
         }
         .defaultSize(width: 1280, height: 820)
         .windowStyle(.hiddenTitleBar)
@@ -41,14 +45,21 @@ struct WorkLogApp: App {
                 Button("导出…") { model.showExport = true }
                     .disabled(model.hasLibrary == false)
             }
-            CommandGroup(replacing: .undoRedo) {}
+            CommandGroup(replacing: .undoRedo) {
+                Button("撤销") { TextEdit.undo(redo: false) }
+                    .keyboardShortcut("z", modifiers: .command)
+                Button("重做") { TextEdit.undo(redo: true) }
+                    .keyboardShortcut("z", modifiers: [.command, .shift])
+            }
             CommandGroup(replacing: .pasteboard) {
-                Button("拷贝") { model.copySelected() }
+                Button("剪切") { TextEdit.cut() }
+                    .keyboardShortcut("x", modifiers: .command)
+                Button("拷贝") { TextEdit.copy { model.copySelected() } }
                     .keyboardShortcut("c", modifiers: .command)
-                    .disabled(fieldEditing == true)
-                Button("粘贴") { model.paste() }
+                Button("粘贴") { TextEdit.paste { model.paste() } }
                     .keyboardShortcut("v", modifiers: .command)
-                    .disabled(fieldEditing == true || model.hasLibrary == false)
+                Button("全选") { TextEdit.selectAll() }
+                    .keyboardShortcut("a", modifiers: .command)
             }
             CommandGroup(replacing: .textEditing) {}
             CommandGroup(replacing: .textFormatting) {}
@@ -56,12 +67,95 @@ struct WorkLogApp: App {
             CommandGroup(replacing: .toolbar) {}
             CommandGroup(replacing: .help) {}
             CommandGroup(replacing: .printItem) {}
+            CommandGroup(replacing: .appSettings) {
+                SettingsCommand()
+            }
         }
 
         Settings {
             SettingsView()
                 .environment(model)
         }
+    }
+}
+
+/// The global add panel and Settings both take over the screen. Opening Settings
+/// on top of that panel leaves neither one able to close.
+private struct SettingsCommand: View {
+    @Environment(\.openSettings) private var openSettings
+
+    var body: some View {
+        Button("设置…") {
+            guard QuickAddPanel.shared.isShowing == false else { return }
+            openSettings()
+        }
+        .keyboardShortcut(",", modifiers: .command)
+    }
+}
+
+/// Text-field shortcuts are handled here, at the moment of the key press.
+/// Menu items built earlier cannot see which field is editing, and a disabled
+/// menu item with the same shortcut only beeps.
+enum TextEdit {
+    static func copy(otherwise item: () -> Void) {
+        guard let text = editingText else { item(); return }
+        text.copy(nil)
+    }
+
+    static func paste(otherwise item: () -> Void) {
+        guard let text = editingText else { item(); return }
+        text.paste(nil)
+    }
+
+    static func cut() {
+        editingText?.cut(nil)
+    }
+
+    static func selectAll() {
+        editingText?.selectAll(nil)
+    }
+
+    static func undo(redo: Bool) {
+        guard let text = editingText else { return }
+        (text as? NSTextView)?.allowsUndo = true
+        let manager = text.undoManager ?? text.window?.undoManager
+        if redo {
+            if manager?.canRedo == true { manager?.redo() }
+        } else if manager?.canUndo == true {
+            manager?.undo()
+        }
+    }
+
+    /// Returns true when the key was used by a text field and should not reach the menu.
+    static func handleShortcut(keyCode: UInt16, shift: Bool, command: Bool, control: Bool, option: Bool) -> Bool {
+        guard command, control == false, option == false, editingText != nil else { return false }
+        switch keyCode {
+        case 0 where shift == false: selectAll()
+        case 6: undo(redo: shift)
+        case 7 where shift == false: cut()
+        case 8 where shift == false: copy { }
+        case 9 where shift == false: paste { }
+        default: return false
+        }
+        return true
+    }
+
+    private static var editingText: NSText? {
+        guard let window = NSApp.keyWindow else { return nil }
+        var responder: NSResponder? = window.firstResponder
+        while let current = responder {
+            if let view = current as? NSTextView, view.isEditable {
+                view.allowsUndo = true
+                return view
+            }
+            if let field = current as? NSTextField, field.isEditable, let editor = field.currentEditor() {
+                (editor as? NSTextView)?.allowsUndo = true
+                return editor
+            }
+            if current is NSWindow { break }
+            responder = current.nextResponder
+        }
+        return nil
     }
 }
 
@@ -126,8 +220,11 @@ final class MenuSlimmer: NSObject, NSMenuDelegate {
     private func slim(_ menu: NSMenu) {
         let parent = NSApp.mainMenu?.items.first { $0.submenu === menu }?.title ?? menu.title
         if parent == "编辑" || parent == "Edit" {
-            let keep: Set<String> = ["拷贝", "粘贴", "Copy", "Paste"]
-            for item in menu.items where keep.contains(item.title) == false {
+            let keep: Set<String> = [
+                "撤销", "重做", "剪切", "拷贝", "粘贴", "全选",
+                "Undo", "Redo", "Cut", "Copy", "Paste", "Select All"
+            ]
+            for item in menu.items.reversed() where keep.contains(item.title) == false || item.isEnabled == false {
                 menu.removeItem(item)
             }
             tidySeparators(menu)

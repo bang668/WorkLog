@@ -55,6 +55,27 @@ enum CalendarMode: String, CaseIterable, Identifiable {
     }
 }
 
+enum DraftPlace {
+    case main
+    case quick
+}
+
+enum QuickAppearance: String, CaseIterable, Identifiable {
+    case light
+    case dark
+    case system
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .light: "亮色"
+        case .dark: "暗色"
+        case .system: "跟随主题"
+        }
+    }
+}
+
 enum EditorKind: String, CaseIterable, Identifiable {
     case right
     case bottom
@@ -174,6 +195,41 @@ struct ItemDraft: Equatable {
                 subTypeId: item.subTypeId
             )
         )
+    }
+}
+
+struct DescriptionSuggestion: Equatable, Identifiable {
+    var description: String
+    var typeId: String
+    var subTypeId: String
+
+    var id: String { description }
+}
+
+enum DescriptionSuggestions {
+    /// Prefix matches inside the day range. The same description keeps the newest item.
+    static func make(items: [WorkItem], query rawQuery: String, startDay: String, endDay: String, excluding excludedID: String?) -> [DescriptionSuggestion] {
+        let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard query.isEmpty == false else { return [] }
+        var best: [String: WorkItem] = [:]
+        for item in items {
+            if item.id == excludedID { continue }
+            if item.date < startDay || item.date > endDay { continue }
+            guard item.description.range(of: query, options: [.anchored, .caseInsensitive]) != nil else { continue }
+            if let existing = best[item.description] {
+                if isNewer(item, than: existing) { best[item.description] = item }
+            } else {
+                best[item.description] = item
+            }
+        }
+        return best.values.sorted(by: isNewer).map {
+            DescriptionSuggestion(description: $0.description, typeId: $0.typeId, subTypeId: $0.subTypeId)
+        }
+    }
+
+    private static func isNewer(_ item: WorkItem, than other: WorkItem) -> Bool {
+        if item.date != other.date { return item.date > other.date }
+        return item.order > other.order
     }
 }
 

@@ -15,12 +15,18 @@ final class AppModel {
     var editorKind: EditorKind {
         didSet { UserDefaults.standard.set(editorKind.rawValue, forKey: Keys.editor) }
     }
+    var quickAppearance: QuickAppearance {
+        didSet { UserDefaults.standard.set(quickAppearance.rawValue, forKey: Keys.quickAppearance) }
+    }
     var draft: ItemDraft?
+    var quickDraft: ItemDraft?
     var activePicker: ActivePicker?
     var pickerMonth: String
     var expandedYears: Set<String>
     var alertTitle: String?
     var alertMessage: String?
+    var descriptionFocusRequest = 0
+    private var focusDescriptionOnAlertDismiss = false
     var confirmTitle: String?
     var confirmMessage: String?
     var confirmCancelTitle = "取消"
@@ -44,6 +50,15 @@ final class AppModel {
         pickerMonth = WorkCalendar.monthKey(fromDay: today)
         expandedYears = [String(today.prefix(4))]
         editorKind = EditorKind(rawValue: UserDefaults.standard.string(forKey: Keys.editor) ?? "") ?? .right
+        quickAppearance = QuickAppearance(rawValue: UserDefaults.standard.string(forKey: Keys.quickAppearance) ?? "") ?? .dark
+        if let raw = UserDefaults.standard.string(forKey: Keys.quickKeyDouble),
+           let kind = DoubleModifierKind(rawValue: raw) {
+            quickHotKey = .doubleTap(kind)
+        } else if UserDefaults.standard.object(forKey: Keys.quickKeyCode) != nil {
+            let code = UInt16(UserDefaults.standard.integer(forKey: Keys.quickKeyCode))
+            let flags = NSEvent.ModifierFlags(rawValue: UInt(UserDefaults.standard.integer(forKey: Keys.quickKeyModifiers)))
+            quickHotKey = QuickHotKey(keyCode: code, flags: flags)
+        }
         if let path = UserDefaults.standard.string(forKey: Keys.folder) {
             let url = URL(fileURLWithPath: path)
             if FileManager.default.fileExists(atPath: url.appendingPathComponent("library.json").path) {
@@ -55,7 +70,14 @@ final class AppModel {
     var hasLibrary: Bool { store != nil && library != nil }
     var canPaste: Bool { hasLibrary && mode != .day && pasteDay != nil }
     var today: String { WorkCalendar.dayKey(Date()) }
-    var draftIsDirty: Bool { draft?.isDirty == true }
+    var draftIsDirty: Bool { draft?.isDirty == true || quickDraft?.isDirty == true }
+    var quickHotKey: QuickHotKey?
+    var quickHotKeyError = ""
+    var quickAlertPresented = false
+    var quickDescriptionFocusRequest = 0
+    var installQuickHotKey: ((QuickHotKey?) -> Bool)?
+    var quickClosing = false
+    var onQuickWillClose: (() -> Void)?
 
     func items(on day: String) -> [WorkItem] {
         let month = WorkCalendar.monthKey(fromDay: day)
@@ -360,33 +382,164 @@ final class AppModel {
         beginEdit(item)
     }
 
+    func descriptionSuggestions(matching query: String, place: DraftPlace = .main) -> [DescriptionSuggestion] {
+        let today = WorkCalendar.dayKey(Date())
+        guard let start = WorkCalendar.shiftingDay(today, by: -29) else { return [] }
+        var month = WorkCalendar.monthKey(fromDay: start)
+        let endMonth = WorkCalendar.monthKey(fromDay: today)
+        for _ in 0..<4 {
+            ensureMonth(month)
+            if month == endMonth { break }
+            guard let next = WorkCalendar.shiftingMonth(month, by: 1) else { break }
+            month = next
+        }
+        let items = itemsByMonth.values.flatMap { $0 }
+        let current = editingDraft(place)
+        let excluded = current?.purpose == .edit ? current?.itemID : nil
+        return DescriptionSuggestions.make(items: items, query: query, startDay: start, endDay: today, excluding: excluded)
+    }
+
+    func editingDraft(_ place: DraftPlace) -> ItemDraft? {
+        place == .quick ? quickDraft : draft
+    }
+
+    func beginQuickAdd() {
+        guard hasLibrary else { return }
+        if quickDraft == nil {
+            quickDraft = .adding(on: today)
+        }
+    }
+
+    func setQuickHotKey(_ hotKey: QuickHotKey?) -> Bool {
+        quickHotKeyError = ""
+        guard let installQuickHotKey else {
+            quickHotKey = hotKey
+            storeQuickHotKey(hotKey)
+            return true
+        }
+        guard installQuickHotKey(hotKey) else {
+            quickHotKeyError = "这个快捷键已经被占用"
+            return false
+        }
+        quickHotKey = hotKey
+        storeQuickHotKey(hotKey)
+        if hotKey?.doubleModifier != nil, DoubleTapHotKey.shared.accessibilityTrusted == false {
+            DoubleTapHotKey.promptAccessibility()
+            quickHotKeyError = "双击快捷键要在系统设置的辅助功能里允许 WorkLog，才能在别的软件里唤起。"
+        }
+        return true
+    }
+
+    private func storeQuickHotKey(_ hotKey: QuickHotKey?) {
+        if let kind = hotKey?.doubleModifier {
+            UserDefaults.standard.set(kind.rawValue, forKey: Keys.quickKeyDouble)
+            UserDefaults.standard.removeObject(forKey: Keys.quickKeyCode)
+            UserDefaults.standard.removeObject(forKey: Keys.quickKeyModifiers)
+        } else if let hotKey {
+            UserDefaults.standard.removeObject(forKey: Keys.quickKeyDouble)
+            UserDefaults.standard.set(Int(hotKey.keyCode), forKey: Keys.quickKeyCode)
+            UserDefaults.standard.set(Int(hotKey.flags.rawValue), forKey: Keys.quickKeyModifiers)
+        } else {
+            UserDefaults.standard.removeObject(forKey: Keys.quickKeyDouble)
+            UserDefaults.standard.removeObject(forKey: Keys.quickKeyCode)
+            UserDefaults.standard.removeObject(forKey: Keys.quickKeyModifiers)
+        }
+    }
+
+    func dismissQuickAlert() {
+        quickAlertPresented = false
+        quickDescriptionFocusRequest += 1
+    }
+
     func updateDraft(_ body: (inout ItemDraft) -> Void) {
-        guard var draft else { return }
-        body(&draft)
-        if draft.typeId != self.draft?.typeId {
-            let children = types.first(where: { $0.id == draft.typeId })?.children ?? []
-            if children.contains(where: { $0.id == draft.subTypeId }) == false {
-                draft.subTypeId = ""
+        updateDraft(.main, body)
+    }
+
+    func updateDraft(_ place: DraftPlace, _ body: (inout ItemDraft) -> Void) {
+        guard var next = editingDraft(place) else { return }
+        let previousType = next.typeId
+        body(&next)
+        if next.typeId != previousType {
+            let children = types.first(where: { $0.id == next.typeId })?.children ?? []
+            if children.contains(where: { $0.id == next.subTypeId }) == false {
+                next.subTypeId = ""
             }
         }
-        self.draft = draft
+        assignDraft(next, place)
+    }
+
+    func resetDraft() {
+        resetDraft(.main)
+    }
+
+    func resetDraft(_ place: DraftPlace) {
+        updateDraft(place) { draft in
+            switch draft.purpose {
+            case .add:
+                draft.description = ""
+                draft.note = ""
+                draft.typeId = ""
+                draft.subTypeId = ""
+            case .edit:
+                draft.date = draft.original.date
+                draft.description = draft.original.description
+                draft.note = draft.original.note
+                draft.typeId = draft.original.typeId
+                draft.subTypeId = draft.original.subTypeId
+            case .view:
+                break
+            }
+        }
     }
 
     func cancelDraft() {
-        draft = nil
+        cancelDraft(.main)
+    }
+
+    func cancelDraft(_ place: DraftPlace) {
+        assignDraft(nil, place)
+    }
+
+    private func assignDraft(_ value: ItemDraft?, _ place: DraftPlace) {
+        switch place {
+        case .main:
+            draft = value
+        case .quick:
+            if value == nil {
+                guard quickDraft != nil, quickClosing == false else { return }
+                quickClosing = true
+                onQuickWillClose?()
+                return
+            }
+            quickDraft = value
+        }
+    }
+
+    func finishQuickClose() {
+        quickDraft = nil
+        quickClosing = false
     }
 
     func saveDraft() {
-        guard var draft else { return }
+        saveDraft(.main)
+    }
+
+    func saveDraft(_ place: DraftPlace) {
+        guard var draft = editingDraft(place) else { return }
         let text = draft.description.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else {
-            present(title: "描述不能为空", message: "写一下做了什么，再保存。")
+            if place == .quick {
+                quickAlertPresented = true
+                return
+            }
+            present(title: "描述不能为空", message: "写一下做了什么，再保存。", focusDescription: true)
             return
         }
         draft.description = text
+        assignDraft(draft, place)
         switch draft.purpose {
         case .add:
-            add(draft)
+            add(draft, place: place)
         case .edit:
             update(draft)
         case .view:
@@ -490,6 +643,19 @@ final class AppModel {
         } else {
             moveItems(by: vertical)
         }
+        return true
+    }
+
+    /// Return opens the edit drawer for the selected item.
+    func handleReturn(_ event: NSEvent) -> Bool {
+        guard event.window?.identifier?.rawValue == "worklog.main" else { return false }
+        guard event.keyCode == 36 || event.keyCode == 76 else { return false }
+        guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { return false }
+        if activePicker != nil || alertTitle != nil || confirmTitle != nil { return false }
+        if let draft, draft.purpose != .view { return false }
+        if event.window?.firstResponder is NSTextView { return false }
+        guard let item = selectedItem else { return false }
+        beginEdit(item)
         return true
     }
 
@@ -886,7 +1052,7 @@ final class AppModel {
         throw CocoaError(.fileReadInapplicableStringEncoding)
     }
 
-    private func add(_ draft: ItemDraft) {
+    private func add(_ draft: ItemDraft, place: DraftPlace = .main) {
         let month = WorkCalendar.monthKey(fromDay: draft.date)
         ensureMonth(month)
         guard unreadableMonths.contains(month) == false, var items = itemsByMonth[month] else {
@@ -909,7 +1075,7 @@ final class AppModel {
             try store?.saveMonth(month, items: items)
             refreshDiskMonths()
             revealMonth(month)
-            finishSave(item, openView: false)
+            finishSave(item, openView: false, place: place)
         } catch {
             present(error)
         }
@@ -972,7 +1138,15 @@ final class AppModel {
         }
     }
 
-    private func finishSave(_ item: WorkItem, openView: Bool) {
+    private func finishSave(_ item: WorkItem, openView: Bool, place: DraftPlace = .main) {
+        if place == .quick {
+            assignDraft(nil, .quick)
+            if draft == nil {
+                selectedItemID = item.id
+                selectedDay = item.date
+            }
+            return
+        }
         selectedItemID = item.id
         selectedDay = item.date
         draft = openView ? .viewing(item) : nil
@@ -1077,7 +1251,15 @@ final class AppModel {
         present(title: "没有完成", message: error.localizedDescription)
     }
 
-    private func present(title: String, message: String) {
+    func dismissAlert() {
+        let focus = focusDescriptionOnAlertDismiss
+        focusDescriptionOnAlertDismiss = false
+        alertTitle = nil
+        if focus { descriptionFocusRequest += 1 }
+    }
+
+    private func present(title: String, message: String, focusDescription: Bool = false) {
+        focusDescriptionOnAlertDismiss = focusDescription
         alertTitle = title
         alertMessage = message
     }
@@ -1135,6 +1317,10 @@ final class AppModel {
     private enum Keys {
         static let folder = "worklog.folderPath"
         static let editor = "worklog.editorKind"
+        static let quickAppearance = "worklog.quickAppearance"
+        static let quickKeyCode = "worklog.quickHotKeyCode"
+        static let quickKeyModifiers = "worklog.quickHotKeyModifiers"
+        static let quickKeyDouble = "worklog.quickHotKeyDoubleModifier"
     }
 }
 
@@ -1148,14 +1334,29 @@ extension SubType: OrderWritable {}
 @MainActor
 final class AppRuntime: NSObject, NSApplicationDelegate {
     static let shared = AppRuntime()
+    static weak var current: AppRuntime?
     weak var model: AppModel?
 
+    func applicationDidBecomeActive(_ notification: Notification) {
+        DoubleTapHotKey.shared.refreshIfNeeded()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        AppRuntime.current = self
         NSWindow.allowsAutomaticWindowTabbing = false
         MenuSlimmer.shared.install()
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            let keyCode = event.keyCode
+            let shift = event.modifierFlags.contains(.shift)
+            let command = event.modifierFlags.contains(.command)
+            let control = event.modifierFlags.contains(.control)
+            let option = event.modifierFlags.contains(.option)
             let handled = MainActor.assumeIsolated {
-                self?.model?.handleArrow(event) ?? false
+                if TextEdit.handleShortcut(keyCode: keyCode, shift: shift, command: command, control: control, option: option) {
+                    return true
+                }
+                guard let model = self?.model else { return false }
+                return model.handleArrow(event) || model.handleReturn(event)
             }
             return handled ? nil : event
         }

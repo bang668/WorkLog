@@ -316,4 +316,49 @@ final class WorkLogTests: XCTestCase {
         XCTAssertEqual(ItemArrow.gridIndex(current: 1, count: 5, columns: 2, horizontal: 0, vertical: -1), 1)
         XCTAssertEqual(ItemArrow.gridIndex(current: 3, count: 5, columns: 2, horizontal: 0, vertical: 1), 4)
     }
+
+    func testDescriptionSuggestionsKeepNewestPrefixMatch() {
+        let items = [
+            sampleItem("old", day: "2026-10-01", text: "整理接口", order: 0),
+            sampleItem("mid", day: "2026-10-20", text: "整理接口", order: 1, type: "需求", sub: "项目需求"),
+            sampleItem("newer-same-day", day: "2026-10-20", text: "整理接口", order: 4, type: "技术债务", sub: "慢sql"),
+            sampleItem("other", day: "2026-10-28", text: "整理会议纪要", order: 0),
+            sampleItem("inside", day: "2026-10-18", text: "周报里整理接口", order: 0),
+            sampleItem("early", day: "2026-09-01", text: "整理接口", order: 0),
+            sampleItem("self", day: "2026-10-29", text: "整理接口变更", order: 0),
+        ]
+        let matches = DescriptionSuggestions.make(
+            items: items,
+            query: " 整理 ",
+            startDay: "2026-10-01",
+            endDay: "2026-10-30",
+            excluding: "self"
+        )
+        XCTAssertEqual(matches.map(\.description), ["整理会议纪要", "整理接口"])
+        XCTAssertEqual(matches[1].typeId, "技术债务")
+        XCTAssertEqual(matches[1].subTypeId, "慢sql")
+        XCTAssertTrue(DescriptionSuggestions.make(items: items, query: " ", startDay: "2026-10-01", endDay: "2026-10-30", excluding: nil).isEmpty)
+    }
+
+    func testDoubleModifierTapNeedsTwoCleanLifts() {
+        var detector = DoubleModifierTapDetector(interval: 0.35)
+        let start = Date()
+        XCTAssertNil(detector.handle(.modifierDown(.command), now: start))
+        XCTAssertNil(detector.handle(.modifierUp(.command), now: start.addingTimeInterval(0.05)))
+        XCTAssertNil(detector.handle(.modifierDown(.command), now: start.addingTimeInterval(0.10)))
+        XCTAssertEqual(detector.handle(.modifierUp(.command), now: start.addingTimeInterval(0.15)), .command)
+
+        var chord = DoubleModifierTapDetector(interval: 0.35)
+        XCTAssertNil(chord.handle(.modifierDown(.command), now: start))
+        XCTAssertNil(chord.handle(.otherKey, now: start.addingTimeInterval(0.02)))
+        XCTAssertNil(chord.handle(.modifierUp(.command), now: start.addingTimeInterval(0.04)))
+        XCTAssertNil(chord.handle(.modifierDown(.command), now: start.addingTimeInterval(0.08)))
+        XCTAssertNil(chord.handle(.otherKey, now: start.addingTimeInterval(0.10)))
+        XCTAssertNil(chord.handle(.modifierUp(.command), now: start.addingTimeInterval(0.12)))
+        XCTAssertEqual(QuickHotKey.doubleTap(.option).label, "双击 ⌥")
+    }
+
+    private func sampleItem(_ id: String, day: String, text: String, order: Int, type: String = "", sub: String = "") -> WorkItem {
+        WorkItem(id: id, date: day, description: text, note: "", typeId: type, subTypeId: sub, order: order)
+    }
 }
