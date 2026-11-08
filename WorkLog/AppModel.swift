@@ -73,7 +73,8 @@ final class AppModel {
     var draftIsDirty: Bool { draft?.isDirty == true || quickDraft?.isDirty == true }
     var quickHotKey: QuickHotKey?
     var quickHotKeyError = ""
-    var quickAlertPresented = false
+    var descriptionMissingMain = false
+    var descriptionMissingQuick = false
     var quickDescriptionFocusRequest = 0
     var installQuickHotKey: ((QuickHotKey?) -> Bool)?
     var quickClosing = false
@@ -227,8 +228,12 @@ final class AppModel {
             self.pickerMonth = WorkCalendar.monthKey(fromDay: day)
             self.ensureMonth(WorkCalendar.monthKey(fromDay: day))
             if !keepPicker { self.activePicker = nil }
-            if clearItem || (self.editorKind == .dialog && self.draft == nil) {
-                self.selectedItemID = nil
+            let formOpen = self.draft?.purpose == .add || self.draft?.purpose == .edit
+            if formOpen == false {
+                let alreadyOnThisDay = clearItem == false && self.selectedItem?.date == day
+                if alreadyOnThisDay == false {
+                    self.selectedItemID = self.items(on: day).first?.id
+                }
             }
             if forPaste {
                 self.pasteDay = self.mode == .day ? nil : day
@@ -406,6 +411,7 @@ final class AppModel {
     func beginQuickAdd() {
         guard hasLibrary else { return }
         if quickDraft == nil {
+            descriptionMissingQuick = false
             quickDraft = .adding(on: today)
         }
     }
@@ -446,9 +452,16 @@ final class AppModel {
         }
     }
 
-    func dismissQuickAlert() {
-        quickAlertPresented = false
-        quickDescriptionFocusRequest += 1
+    func descriptionMissing(_ place: DraftPlace) -> Bool {
+        place == .quick ? descriptionMissingQuick : descriptionMissingMain
+    }
+
+    private func setDescriptionMissing(_ missing: Bool, _ place: DraftPlace) {
+        if place == .quick {
+            descriptionMissingQuick = missing
+        } else {
+            descriptionMissingMain = missing
+        }
     }
 
     func updateDraft(_ body: (inout ItemDraft) -> Void) {
@@ -464,6 +477,9 @@ final class AppModel {
             if children.contains(where: { $0.id == next.subTypeId }) == false {
                 next.subTypeId = ""
             }
+        }
+        if next.description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            setDescriptionMissing(false, place)
         }
         assignDraft(next, place)
     }
@@ -490,6 +506,7 @@ final class AppModel {
                 break
             }
         }
+        setDescriptionMissing(false, place)
     }
 
     func cancelDraft() {
@@ -497,6 +514,7 @@ final class AppModel {
     }
 
     func cancelDraft(_ place: DraftPlace) {
+        setDescriptionMissing(false, place)
         assignDraft(nil, place)
     }
 
@@ -518,6 +536,7 @@ final class AppModel {
     func finishQuickClose() {
         quickDraft = nil
         quickClosing = false
+        descriptionMissingQuick = false
     }
 
     func saveDraft() {
@@ -528,13 +547,15 @@ final class AppModel {
         guard var draft = editingDraft(place) else { return }
         let text = draft.description.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else {
+            setDescriptionMissing(true, place)
             if place == .quick {
-                quickAlertPresented = true
-                return
+                quickDescriptionFocusRequest += 1
+            } else {
+                descriptionFocusRequest += 1
             }
-            present(title: "描述不能为空", message: "写一下做了什么，再保存。", focusDescription: true)
             return
         }
+        setDescriptionMissing(false, place)
         draft.description = text
         assignDraft(draft, place)
         switch draft.purpose {

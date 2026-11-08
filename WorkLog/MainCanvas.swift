@@ -89,7 +89,11 @@ struct MainCanvas: View {
             }
             .buttonStyle(SegmentHitStyle())
             .accessibilityLabel(sidebarCollapsed ? "显示侧栏" : "收起侧栏")
-            WorkSegmented(titles: CalendarMode.allCases.map(\.title), selection: modeIndex)
+            WorkSegmented(
+                titles: CalendarMode.allCases.map(\.title),
+                symbols: ["square.grid.2x2", "list.bullet", "calendar"],
+                selection: modeIndex
+            )
             chevron("chevron.left") { model.shift(-1) }
             Button { togglePicker() } label: {
                 Text(chipTitle)
@@ -122,8 +126,17 @@ struct MainCanvas: View {
                     .font(.system(size: 12))
                     .foregroundStyle(WorkColor.secondary)
             }
-            Button("今天") { model.showToday() }
-                .buttonStyle(WorkButtonStyle())
+            Button {
+                model.showToday()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "sun.max.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(WorkTint.date)
+                    Text("今天")
+                }
+            }
+            .buttonStyle(WorkButtonStyle())
         }
         .padding(.leading, sidebarCollapsed ? 72 : 14)
         .padding(.trailing, 14)
@@ -134,15 +147,7 @@ struct MainCanvas: View {
     }
 
     private func chevron(_ name: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: name)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(WorkColor.secondary)
-                .frame(width: 28, height: 28)
-                .background(Color.white.opacity(0.001))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(SegmentHitStyle())
+        ToolbarChevron(name: name, action: action)
     }
 
     @ViewBuilder
@@ -346,6 +351,29 @@ struct DayPicker: View {
         if let next = WorkCalendar.shiftingMonth(month, by: delta) {
             month = next
         }
+    }
+}
+
+private struct ToolbarChevron: View {
+    let name: String
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: name)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(hovering ? WorkColor.ink : WorkColor.secondary)
+                .frame(width: 28, height: 28)
+                .background(
+                    hovering ? Color.black.opacity(0.08) : Color.clear,
+                    in: RoundedRectangle(cornerRadius: 6)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(SegmentHitStyle())
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
     }
 }
 

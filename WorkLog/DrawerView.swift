@@ -388,11 +388,11 @@ private struct FormKeyCatcher: NSViewRepresentable {
     var onMoveSuggestion: (Int) -> Void
     var onUseSuggestion: () -> Void
     var onCloseSuggestions: () -> Void
-    var onSubmit: () -> Void
-    var onReset: () -> Void
-    var onCancel: () -> Void
-    var onEscape: () -> Void
-    var windowID = "worklog.main"
+        var onSubmit: () -> Void
+        var onReset: () -> Void
+        var onCancel: () -> Void
+        var onEscape: () -> Void
+        var windowID = "worklog.main"
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -734,18 +734,6 @@ struct DrawerOverlay: View {
                 dropped = false
             }
         }
-        .alert("描述不能为空", isPresented: quickAlertPresented) {
-            Button("好") { model.dismissQuickAlert() }
-        } message: {
-            Text("写一下做了什么，再保存。")
-        }
-    }
-
-    private var quickAlertPresented: Binding<Bool> {
-        Binding(
-            get: { model.quickAlertPresented },
-            set: { if $0 == false { model.dismissQuickAlert() } }
-        )
     }
 
     private var quickCard: some View {
@@ -883,7 +871,7 @@ struct DrawerOverlay: View {
     private var viewBody: some View {
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
-                Text("日期").font(.system(size: 12)).foregroundStyle(WorkColor.secondary)
+                WorkCaption(title: "日期", symbol: "calendar", tint: WorkTint.date(night))
                 Text(WorkCalendar.chineseYearMonthDay(model.draft?.date ?? "")).font(.system(size: 14))
                 Text(WorkCalendar.weekdayName(of: model.draft?.date ?? "")).font(.system(size: 14))
             }
@@ -891,15 +879,15 @@ struct DrawerOverlay: View {
             TypeResultTags(names: [
                 name(model.draft?.typeId ?? "", child: false),
                 name(model.draft?.subTypeId ?? "", child: true)
-            ])
-            labeled("描述", model.draft?.description ?? "")
+            ], typeID: model.draft?.typeId ?? "")
+            labeled("描述", model.draft?.description ?? "", symbol: "text.alignleft", tint: WorkTint.type(night))
             noteLabel(model.draft?.note ?? "")
         }
     }
 
     private var formBody: some View {
         VStack(alignment: .leading, spacing: 10) {
-            WorkField(title: "日期") {
+            WorkField(title: "日期", symbol: "calendar", tint: WorkTint.date(night)) {
                 Button {
                     draftPickerMonth = WorkCalendar.monthKey(fromDay: editing?.date ?? model.selectedDay)
                     openMenu = openMenu == "date" ? nil : "date"
@@ -929,7 +917,12 @@ struct DrawerOverlay: View {
                     }
                 }
             }
-            WorkField(title: "描述") {
+            WorkField(
+                title: "描述",
+                symbol: "text.alignleft",
+                tint: WorkTint.type(night),
+                hint: model.descriptionMissing(place) ? "不能为空" : nil
+            ) {
                 HStack(spacing: 2) {
                     TextField("做了什么", text: descriptionBinding)
                         .textFieldStyle(.plain)
@@ -944,6 +937,7 @@ struct DrawerOverlay: View {
                 .padding(.leading, 8)
                 .padding(.trailing, editing?.description.isEmpty == false ? 6 : 8)
                 .frame(height: 28)
+                .frame(maxWidth: .infinity)
                 .background(fieldFill, in: RoundedRectangle(cornerRadius: 7))
                 .overlay(RoundedRectangle(cornerRadius: 7).stroke(fieldLine))
                 .background {
@@ -953,7 +947,7 @@ struct DrawerOverlay: View {
                 }
             }
             flatTypes
-            WorkField(title: "备注") {
+            WorkField(title: "备注", symbol: "note.text", tint: WorkTint.note(night)) {
                 NoteEditor(text: noteBinding, placeholder: "选填", focused: formField == .note) {
                     if onActionButton, Self.isClick == false { return }
                     formField = .note
@@ -1109,7 +1103,7 @@ struct DrawerOverlay: View {
         let roots = model.types.sorted { $0.order < $1.order }
         let subs = children.filter { $0.name.isEmpty == false }
         return VStack(alignment: .leading, spacing: 10) {
-            typeGroup("一级类型") {
+            typeGroup("一级类型", symbol: "tag") {
                 if roots.isEmpty {
                     Text("还没有类型")
                         .font(.system(size: 12))
@@ -1126,7 +1120,7 @@ struct DrawerOverlay: View {
                     }
                 }
             }
-            typeGroup("二级类型") {
+            typeGroup("二级类型", symbol: "tag.fill") {
                 if editing?.typeId.isEmpty != false {
                     Text("先选择一级类型")
                         .font(.system(size: 12))
@@ -1150,11 +1144,14 @@ struct DrawerOverlay: View {
         }
     }
 
-    private func typeGroup(_ title: String, @ViewBuilder content: () -> some View) -> some View {
+    private func typeGroup(_ title: String, symbol: String, @ViewBuilder content: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .font(.system(size: 11))
-                .foregroundStyle(night ? Color(white: 0.48) : WorkColor.tertiary)
+            HStack(spacing: 4) {
+                WorkMark(symbol: symbol, tint: WorkTint.type(night), size: 10)
+                Text(title)
+                    .font(.system(size: 11))
+                    .foregroundStyle(night ? Color(white: 0.62) : WorkColor.secondary)
+            }
             content()
         }
     }
@@ -1163,9 +1160,9 @@ struct DrawerOverlay: View {
         model.types.first(where: { $0.id == editing?.typeId })?.children.sorted { $0.order < $1.order } ?? []
     }
 
-    private func labeled(_ title: String, _ value: String) -> some View {
+    private func labeled(_ title: String, _ value: String, symbol: String, tint: Color) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(title).font(.system(size: 12)).foregroundStyle(WorkColor.secondary)
+            WorkCaption(title: title, symbol: symbol, tint: tint)
             Text(value.isEmpty ? "—" : value).font(.system(size: 14))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1173,7 +1170,7 @@ struct DrawerOverlay: View {
 
     private func noteLabel(_ value: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text("备注").font(.system(size: 12)).foregroundStyle(WorkColor.secondary)
+            WorkCaption(title: "备注", symbol: "note.text", tint: WorkTint.note(night))
             if value.isEmpty {
                 EmptyMark()
             } else {

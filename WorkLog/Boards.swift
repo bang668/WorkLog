@@ -287,23 +287,33 @@ private struct DayGridCard: View {
     static let height: CGFloat = 168
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(item.description)
-                .font(.system(size: 15))
-                .foregroundStyle(WorkColor.ink)
-                .lineLimit(3)
-                .multilineTextAlignment(.leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            if item.note.isEmpty == false {
-                Text(item.note)
-                    .font(.system(size: 13))
-                    .foregroundStyle(WorkColor.secondary)
-                    .lineLimit(2)
+        HStack(alignment: .top, spacing: 8) {
+            RoundedRectangle(cornerRadius: 1.5)
+                .fill(TypeTone.tone(typeID: item.typeId, night: false)?.mark ?? Self.emptyMark)
+                .frame(width: 3)
+                .frame(maxHeight: .infinity)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(item.description)
+                    .font(.system(size: 15))
+                    .foregroundStyle(WorkColor.ink)
+                    .lineLimit(3)
                     .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                if item.note.isEmpty == false {
+                    HStack(alignment: .top, spacing: 4) {
+                        WorkMark(symbol: "note.text", tint: WorkTint.note, size: 11)
+                            .padding(.top, 1)
+                        Text(item.note)
+                            .font(.system(size: 13))
+                            .foregroundStyle(WorkColor.secondary)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                Spacer(minLength: 0)
+                typeLine
             }
-            Spacer(minLength: 0)
-            typeLine
         }
         .padding(14)
         .frame(maxWidth: .infinity, minHeight: Self.height, maxHeight: Self.height, alignment: .topLeading)
@@ -329,10 +339,7 @@ private struct DayGridCard: View {
             if parent.isEmpty && child.isEmpty {
                 EmptyMark()
             } else {
-                Text(child.isEmpty ? parent : "\(parent) / \(child)")
-                    .font(.system(size: 12))
-                    .foregroundStyle(WorkColor.secondary)
-                    .lineLimit(1)
+                TypeResultTags(names: [parent, child], typeID: item.typeId)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -351,6 +358,7 @@ private struct DayGridCard: View {
     }
 
     private static let rest = Color(red: 0.994, green: 0.988, blue: 0.978)
+    fileprivate static let emptyMark = Color(red: 0.76, green: 0.72, blue: 0.66)
 }
 
 private struct EntryRow: View {
@@ -360,19 +368,40 @@ private struct EntryRow: View {
     @State private var hovering = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(item.description)
-                .font(.system(size: kind == .day ? 14 : 12, weight: .regular))
-                .foregroundStyle(WorkColor.ink)
-                .lineLimit(kind == .week ? 2 : nil)
-                .multilineTextAlignment(.leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            if kind == .day, item.note.isEmpty == false {
-                Text(item.note)
-                    .font(.system(size: 13))
-                    .foregroundStyle(WorkColor.secondary)
+        HStack(alignment: .top, spacing: 6) {
+            RoundedRectangle(cornerRadius: 1.5)
+                .fill(TypeTone.tone(typeID: item.typeId, night: false)?.mark ?? DayGridCard.emptyMark)
+                .frame(width: 3)
+                .frame(maxHeight: .infinity)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(item.description)
+                    .font(.system(size: kind == .day ? 14 : 12, weight: .regular))
+                    .foregroundStyle(WorkColor.ink)
+                    .lineLimit(kind == .week ? 2 : nil)
                     .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                if kind == .week, item.note.isEmpty == false {
+                    Text(item.note)
+                        .font(.system(size: 11))
+                        .foregroundStyle(WorkColor.secondary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if kind == .day, item.note.isEmpty == false {
+                    HStack(alignment: .top, spacing: 4) {
+                        WorkMark(symbol: "note.text", tint: WorkTint.note, size: 11)
+                            .padding(.top, 1)
+                        Text(item.note)
+                            .font(.system(size: 13))
+                            .foregroundStyle(WorkColor.secondary)
+                            .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                if kind == .week {
+                    weekTypes
+                }
             }
         }
         .padding(kind == .day ? 10 : 4)
@@ -399,6 +428,16 @@ private struct EntryRow: View {
     }
 
     private var rowRadius: CGFloat { kind == .day ? 10 : 7 }
+
+    @ViewBuilder
+    private var weekTypes: some View {
+        let parent = TypeNames.parentName(typeID: item.typeId, types: model.types)
+        let child = TypeNames.childName(typeID: item.typeId, subTypeID: item.subTypeId, types: model.types)
+        let names = [parent, child].filter { $0.isEmpty == false }
+        if names.isEmpty == false {
+            TypeResultTags(names: names, typeID: item.typeId, compact: true)
+        }
+    }
 
     private var fill: Color {
         if model.selectedItemID == item.id { return WorkColor.blueSoft }
@@ -448,12 +487,14 @@ private struct MonthEntry: View {
     private var fill: Color {
         if model.selectedItemID == item.id { return WorkColor.blueSoft }
         if hovering { return WorkColor.paper }
+        if let tone = TypeTone.tone(typeID: item.typeId, night: false) { return tone.fill }
         return WorkColor.chip
     }
 
     private var stroke: Color {
         if model.selectedItemID == item.id { return WorkColor.blue.opacity(0.45) }
         if hovering { return DayAddButton.chipHoverStroke }
+        if let tone = TypeTone.tone(typeID: item.typeId, night: false) { return tone.mark.opacity(0.28) }
         return WorkColor.line
     }
 }

@@ -107,7 +107,11 @@ struct SettingsView: View {
         VStack(spacing: 0) {
             HStack {
                 Spacer()
-                WorkSegmented(titles: ["通用", "事项类型", "关于"], selection: $tab)
+                WorkSegmented(
+                    titles: ["通用", "事项类型", "关于"],
+                    symbols: ["gearshape", "tag", "info.circle"],
+                    selection: $tab
+                )
                 Spacer()
             }
             .padding(.top, 16)
@@ -170,8 +174,7 @@ struct SettingsView: View {
     private var generalPage: some View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("开机启动")
-                    .font(.system(size: 13, weight: .semibold))
+                WorkCaption(title: "开机启动", symbol: "power", tint: WorkTint.date, size: 13, prominent: true)
                 HStack(alignment: .center, spacing: 12) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("登录后自动打开")
@@ -191,8 +194,7 @@ struct SettingsView: View {
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(WorkColor.line))
             }
             VStack(alignment: .leading, spacing: 8) {
-                Text("全局快捷键")
-                    .font(.system(size: 13, weight: .semibold))
+                WorkCaption(title: "全局快捷键", symbol: "keyboard", tint: WorkTint.type, size: 13, prominent: true)
                 HStack(alignment: .center, spacing: 12) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("唤起添加")
@@ -239,8 +241,7 @@ struct SettingsView: View {
                 }
             }
             VStack(alignment: .leading, spacing: 8) {
-                Text("下拉弹窗")
-                    .font(.system(size: 13, weight: .semibold))
+                WorkCaption(title: "下拉弹窗", symbol: "chevron.down.circle", tint: WorkTint.note, size: 13, prominent: true)
                 Text("快捷键唤起的添加窗口。记在这台 Mac 上。")
                     .font(.system(size: 13))
                     .foregroundStyle(WorkColor.secondary)
@@ -251,8 +252,7 @@ struct SettingsView: View {
                 }
             }
             VStack(alignment: .leading, spacing: 8) {
-                Text("编辑方式")
-                    .font(.system(size: 13, weight: .semibold))
+                WorkCaption(title: "编辑方式", symbol: "rectangle.split.3x1", tint: WorkColor.blue, size: 13, prominent: true)
                 Text("记在这台 Mac 上。")
                     .font(.system(size: 13))
                     .foregroundStyle(WorkColor.secondary)
@@ -355,7 +355,7 @@ struct SettingsView: View {
     }
 
     private var appVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.4"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.5"
     }
 
     private var launchBinding: Binding<Bool> {

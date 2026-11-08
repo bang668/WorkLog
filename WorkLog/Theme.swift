@@ -25,6 +25,85 @@ enum WorkColor {
     static let outside = Color(red: 0.969, green: 0.965, blue: 0.949)
 }
 
+enum WorkTint {
+    static let date = Color(red: 0.78, green: 0.45, blue: 0.16)
+    static let dateNight = Color(red: 0.96, green: 0.72, blue: 0.42)
+    static let note = Color(red: 0.45, green: 0.38, blue: 0.62)
+    static let noteNight = Color(red: 0.78, green: 0.72, blue: 0.94)
+    static let type = Color(red: 0.12, green: 0.48, blue: 0.42)
+    static let typeNight = Color(red: 0.48, green: 0.82, blue: 0.74)
+
+    static func date(_ night: Bool) -> Color { night ? dateNight : date }
+    static func note(_ night: Bool) -> Color { night ? noteNight : note }
+    static func type(_ night: Bool) -> Color { night ? typeNight : type }
+}
+
+/// One stable color per level-1 type. Light uses a pale fill and dark text;
+/// night uses a deep fill and a light text of the same hue.
+struct TypeTone {
+    var mark: Color
+    var fill: Color
+    var text: Color
+
+    static func tone(typeID: String, night: Bool) -> TypeTone? {
+        guard typeID.isEmpty == false else { return nil }
+        let hues: [(Color, Color, Color, Color, Color, Color)] = [
+            (Color(red: 0.12, green: 0.48, blue: 0.42), Color(red: 0.86, green: 0.94, blue: 0.91), Color(red: 0.08, green: 0.36, blue: 0.32),
+             Color(red: 0.48, green: 0.84, blue: 0.76), Color(red: 0.12, green: 0.28, blue: 0.26), Color(red: 0.74, green: 0.93, blue: 0.87)),
+            (Color(red: 0.76, green: 0.42, blue: 0.14), Color(red: 0.98, green: 0.92, blue: 0.84), Color(red: 0.55, green: 0.28, blue: 0.06),
+             Color(red: 0.96, green: 0.70, blue: 0.40), Color(red: 0.32, green: 0.20, blue: 0.10), Color(red: 0.98, green: 0.84, blue: 0.66)),
+            (Color(red: 0.46, green: 0.32, blue: 0.66), Color(red: 0.93, green: 0.90, blue: 0.97), Color(red: 0.34, green: 0.20, blue: 0.52),
+             Color(red: 0.78, green: 0.66, blue: 0.96), Color(red: 0.24, green: 0.16, blue: 0.32), Color(red: 0.88, green: 0.80, blue: 0.98)),
+            (Color(red: 0.72, green: 0.26, blue: 0.32), Color(red: 0.98, green: 0.90, blue: 0.90), Color(red: 0.54, green: 0.14, blue: 0.20),
+             Color(red: 0.96, green: 0.58, blue: 0.62), Color(red: 0.32, green: 0.14, blue: 0.16), Color(red: 0.98, green: 0.78, blue: 0.80)),
+            (Color(red: 0.24, green: 0.48, blue: 0.20), Color(red: 0.90, green: 0.95, blue: 0.86), Color(red: 0.14, green: 0.36, blue: 0.12),
+             Color(red: 0.62, green: 0.86, blue: 0.50), Color(red: 0.16, green: 0.26, blue: 0.12), Color(red: 0.82, green: 0.94, blue: 0.72)),
+            (Color(red: 0.26, green: 0.34, blue: 0.70), Color(red: 0.90, green: 0.92, blue: 0.98), Color(red: 0.16, green: 0.22, blue: 0.52),
+             Color(red: 0.66, green: 0.74, blue: 0.98), Color(red: 0.14, green: 0.16, blue: 0.32), Color(red: 0.82, green: 0.86, blue: 0.98))
+        ]
+        var hash = 0
+        for byte in typeID.utf8 {
+            hash = (hash &* 33 &+ Int(byte)) % 10007
+        }
+        let hue = hues[hash % hues.count]
+        if night {
+            return TypeTone(mark: hue.3, fill: hue.4, text: hue.5)
+        }
+        return TypeTone(mark: hue.0, fill: hue.1, text: hue.2)
+    }
+}
+
+struct WorkMark: View {
+    var symbol: String
+    var tint: Color
+    var size: CGFloat = 11
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: size, weight: .semibold))
+            .foregroundStyle(tint)
+            .frame(width: size + 3, height: size + 3)
+    }
+}
+
+struct WorkCaption: View {
+    var title: String
+    var symbol: String
+    var tint: Color
+    var size: CGFloat = 12
+    var prominent = false
+    @Environment(\.workNight) private var night
+
+    var body: some View {
+        HStack(spacing: 4) {
+            WorkMark(symbol: symbol, tint: tint, size: max(9, size - 1))
+            Text(title)
+                .font(.system(size: size, weight: prominent ? .semibold : .regular))
+                .foregroundStyle(prominent ? WorkColor.ink : (night ? Color(white: 0.62) : WorkColor.secondary))
+        }
+    }
+}
+
 struct WorkButtonStyle: ButtonStyle {
     var prominent = false
     var focused = false
@@ -62,6 +141,7 @@ private struct WorkButtonBody: View {
 
 struct WorkSegmented: View {
     let titles: [String]
+    var symbols: [String] = []
     @Binding var selection: Int
 
     var body: some View {
@@ -70,10 +150,17 @@ struct WorkSegmented: View {
                 Button {
                     selection = index
                 } label: {
-                    Text(title)
-                        .font(.system(size: 13, weight: selection == index ? .semibold : .regular))
-                        .foregroundStyle(selection == index ? WorkColor.ink : WorkColor.secondary)
-                        .padding(.horizontal, 14)
+                    HStack(spacing: 4) {
+                        if symbols.indices.contains(index) {
+                            Image(systemName: symbols[index])
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(selection == index ? WorkColor.blue : WorkColor.secondary)
+                        }
+                        Text(title)
+                            .font(.system(size: 13, weight: selection == index ? .semibold : .regular))
+                            .foregroundStyle(selection == index ? WorkColor.ink : WorkColor.secondary)
+                    }
+                        .padding(.horizontal, 10)
                         .padding(.vertical, 4)
                         .frame(minWidth: 40, minHeight: 22)
                         .background {
@@ -221,15 +308,29 @@ struct WorkMenuRow: View {
 }
 
 struct WorkField<Content: View>: View {
-    let title: String
+    var title: String
+    var symbol: String? = nil
+    var tint: Color? = nil
+    var hint: String? = nil
     @ViewBuilder var content: Content
     @Environment(\.workNight) private var night
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .font(.system(size: 11))
-                .foregroundStyle(night ? Color(white: 0.62) : WorkColor.secondary)
+            HStack(spacing: 4) {
+                if let symbol {
+                    WorkMark(symbol: symbol, tint: tint ?? (night ? Color(white: 0.62) : WorkColor.secondary), size: 10)
+                }
+                Text(title)
+                    .font(.system(size: 11))
+                    .foregroundStyle(night ? Color(white: 0.62) : WorkColor.secondary)
+                if let hint, hint.isEmpty == false {
+                    Text(hint)
+                        .font(.system(size: 11))
+                        .foregroundStyle(night ? Color(red: 1, green: 0.45, blue: 0.42) : Color(red: 0.84, green: 0.16, blue: 0.14))
+                        .padding(.leading, 2)
+                }
+            }
             content
         }
     }
