@@ -194,6 +194,26 @@ struct SettingsView: View {
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(WorkColor.line))
             }
             VStack(alignment: .leading, spacing: 8) {
+                WorkCaption(title: "收件箱", symbol: "tray", tint: WorkTint.note, size: 13, prominent: true)
+                HStack(alignment: .center, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("自动处理")
+                            .font(.system(size: 13))
+                        Text("关闭时，用「文件」菜单里的「处理收件箱」读取外部工具投来的事项。")
+                            .font(.system(size: 12))
+                            .foregroundStyle(WorkColor.secondary)
+                    }
+                    Spacer(minLength: 8)
+                    Toggle("自动处理", isOn: inboxBinding)
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                        .tint(WorkColor.blue)
+                }
+                .padding(12)
+                .background(Color.white, in: RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(WorkColor.line))
+            }
+            VStack(alignment: .leading, spacing: 8) {
                 WorkCaption(title: "全局快捷键", symbol: "keyboard", tint: WorkTint.type, size: 13, prominent: true)
                 HStack(alignment: .center, spacing: 12) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -355,7 +375,14 @@ struct SettingsView: View {
     }
 
     private var appVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.5"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.6"
+    }
+
+    private var inboxBinding: Binding<Bool> {
+        Binding(
+            get: { model.processInboxAutomatically },
+            set: { model.setProcessInboxAutomatically($0) }
+        )
     }
 
     private var launchBinding: Binding<Bool> {

@@ -10,6 +10,17 @@
 
 新版本写在上面，以前的版本留在下面。打开 DMG 后把 WorkLog.app 拖进「应用程序」；ZIP 则先解压，再把应用放进去。这些安装包没有经过 Apple 公证，第一次打开时在 Finder 里按住 Control 点按应用，选择「打开」。
 
+### 0.0.6
+
+2026-11-15 · 需要 macOS 14 或更高版本
+
+- 可以处理日志文件夹里 inbox 中的事项。外部工具投来的内容会新增、更新或删除，写进对应日期。
+- 手写的事项会记下写入时间。之后如果投来的内容更早，不会覆盖你改过的标题和备注。
+- 自动处理放在设置的「通用」里，默认关闭。关闭时用「文件」菜单的「处理收件箱」，有待处理文件时菜单会显示数量。
+
+- [WorkLog-0.0.6.dmg](https://github.com/bang668/WorkLog/releases/download/v0.0.6/WorkLog-0.0.6.dmg)
+- [WorkLog-0.0.6.zip](https://github.com/bang668/WorkLog/releases/download/v0.0.6/WorkLog-0.0.6.zip)
+
 ### 0.0.5
 
 2026-11-08 · 需要 macOS 14 或更高版本

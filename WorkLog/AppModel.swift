@@ -36,6 +36,10 @@ final class AppModel {
     var showExport = false
     var showImport = false
     var statusMessage: String?
+    var inboxPendingCount = 0
+    var processInboxAutomatically: Bool {
+        didSet { UserDefaults.standard.set(processInboxAutomatically, forKey: Keys.inboxAuto) }
+    }
 
     private var store: LogStore?
     private var itemsByMonth: [String: [WorkItem]] = [:]
@@ -51,6 +55,7 @@ final class AppModel {
         expandedYears = [String(today.prefix(4))]
         editorKind = EditorKind(rawValue: UserDefaults.standard.string(forKey: Keys.editor) ?? "") ?? .right
         quickAppearance = QuickAppearance(rawValue: UserDefaults.standard.string(forKey: Keys.quickAppearance) ?? "") ?? .dark
+        processInboxAutomatically = UserDefaults.standard.bool(forKey: Keys.inboxAuto)
         if let raw = UserDefaults.standard.string(forKey: Keys.quickKeyDouble),
            let kind = DoubleModifierKind(rawValue: raw) {
             quickHotKey = .doubleTap(kind)
@@ -1088,7 +1093,9 @@ final class AppModel {
             note: draft.note,
             typeId: draft.typeId,
             subTypeId: draft.subTypeId,
-            order: order
+            order: order,
+            source: "manual",
+            materialTs: WorkStamp.isoNow()
         )
         items.append(item)
         itemsByMonth[month] = items
@@ -1111,6 +1118,7 @@ final class AppModel {
         existing.typeId = draft.typeId
         existing.subTypeId = draft.subTypeId
         existing.date = draft.date
+        existing.materialTs = WorkStamp.isoNow()
         if fromMonth == toMonth {
             guard var items = itemsByMonth[fromMonth] else { return }
             let sameDay = items.contains { $0.id == id && $0.date == draft.date }
@@ -1229,6 +1237,7 @@ final class AppModel {
         folderURL = store.root
         UserDefaults.standard.set(store.root.path, forKey: Keys.folder)
         refreshDiskMonths()
+        refreshInboxCount()
         let today = WorkCalendar.dayKey(Date())
         selectedDay = today
         pickerMonth = WorkCalendar.monthKey(fromDay: today)
@@ -1342,6 +1351,117 @@ final class AppModel {
         static let quickKeyCode = "worklog.quickHotKeyCode"
         static let quickKeyModifiers = "worklog.quickHotKeyModifiers"
         static let quickKeyDouble = "worklog.quickHotKeyDoubleModifier"
+        static let inboxAuto = "worklog.processInboxAutomatically"
+    }
+
+    var inboxMenuTitle: String {
+        inboxPendingCount > 0 ? "处理收件箱，有 \(inboxPendingCount) 个待处理文件" : "处理收件箱"
+    }
+
+    func refreshInboxCount() {
+        let count = store?.inboxJSONFiles().count ?? 0
+        if count != inboxPendingCount { inboxPendingCount = count }
+    }
+
+    func ingestInboxIfAutomatic() {
+        refreshInboxCount()
+        guard processInboxAutomatically else { return }
+        processInbox()
+    }
+
+    func setProcessInboxAutomatically(_ enabled: Bool) {
+        processInboxAutomatically = enabled
+        if enabled { processInbox() }
+    }
+
+    func processInbox() {
+        guard let store else { return }
+        var problems: [String] = []
+        var finished = 0
+        for file in store.inboxJSONFiles() {
+            let processing: URL
+            do {
+                processing = try store.claimInboxFile(file)
+            } catch {
+                continue
+            }
+            do {
+                let day = try applyInbox(processing, store: store)
+                do {
+                    try store.archiveInboxFile(processing, day: day, clock: WorkStamp.clock())
+                    finished += 1
+                } catch {
+                    problems.append("\(file.lastPathComponent)：事项已经写入，收件箱文件没能移到 done。")
+                }
+            } catch {
+                try? store.restoreInboxFile(processing)
+                let message = (error as? Inbox.Problem)?.message ?? "没能写入。"
+                problems.append("\(file.lastPathComponent)：\(message)")
+            }
+        }
+        refreshInboxCount()
+        if problems.isEmpty == false {
+            present(title: "收件箱有文件没处理完", message: problems.joined(separator: "\n"))
+        } else if finished > 0 {
+            let text = "处理了 \(finished) 份收件箱"
+            statusMessage = text
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(2))
+                if statusMessage == text { statusMessage = nil }
+            }
+        }
+    }
+
+    private func applyInbox(_ processing: URL, store: LogStore) throws -> String {
+        let data: Data
+        do {
+            data = try Data(contentsOf: processing)
+        } catch {
+            throw Inbox.Problem(message: "读不出来。")
+        }
+        let payload: Inbox.Payload
+        do {
+            payload = try JSONDecoder().decode(Inbox.Payload.self, from: data)
+        } catch {
+            throw Inbox.Problem(message: "读不出来。")
+        }
+        let day = Inbox.fileDay(processing)
+        guard day == payload.date else {
+            throw Inbox.Problem(message: "日期和文件名不一致。")
+        }
+        let month = WorkCalendar.monthKey(fromDay: day)
+        let original = try itemsForInbox(month)
+        let applied = try Inbox.apply(ops: payload.ops, date: day, to: original, makeID: { Self.newID("i") })
+        let next = Self.renumber(applied)
+        if next != original {
+            try store.saveMonth(month, items: next)
+            itemsByMonth[month] = next
+            refreshDiskMonths()
+            revealMonth(month)
+            if let id = selectedItemID,
+               original.contains(where: { $0.id == id }),
+               next.contains(where: { $0.id == id }) == false {
+                selectedItemID = nil
+                if draft?.itemID == id { draft = nil }
+                if quickDraft?.itemID == id { quickDraft = nil }
+            }
+        }
+        return day
+    }
+
+    private func itemsForInbox(_ month: String) throws -> [WorkItem] {
+        if let items = itemsByMonth[month] { return items }
+        if unreadableMonths.contains(month) {
+            throw Inbox.Problem(message: "\(month) 读不出来。")
+        }
+        do {
+            let items = try store?.loadMonth(month) ?? []
+            itemsByMonth[month] = items
+            return items
+        } catch {
+            unreadableMonths.insert(month)
+            throw Inbox.Problem(message: "\(month) 读不出来。")
+        }
     }
 }
 
@@ -1360,6 +1480,7 @@ final class AppRuntime: NSObject, NSApplicationDelegate {
 
     func applicationDidBecomeActive(_ notification: Notification) {
         DoubleTapHotKey.shared.refreshIfNeeded()
+        model?.ingestInboxIfAutomatic()
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -1385,6 +1506,7 @@ final class AppRuntime: NSObject, NSApplicationDelegate {
 
     func applicationWillUpdate(_ notification: Notification) {
         MenuSlimmer.shared.install()
+        model?.refreshInboxCount()
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

@@ -8,6 +8,9 @@ struct WorkItem: Codable, Identifiable, Equatable {
     var typeId: String
     var subTypeId: String
     var order: Int
+    /// Older files omit these keys. They stay optional so those files still decode.
+    var source: String? = nil
+    var materialTs: String? = nil
 }
 
 struct SubType: Codable, Identifiable, Equatable {

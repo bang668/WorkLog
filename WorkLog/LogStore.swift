@@ -76,6 +76,7 @@ struct LogStore {
         var months: [String] = []
         for yearURL in years {
             let year = yearURL.lastPathComponent
+            guard year != "inbox", year != "done" else { continue }
             guard year.count == 4, Int(year) != nil else { continue }
             guard let files = try? fileManager.contentsOfDirectory(at: yearURL, includingPropertiesForKeys: nil) else { continue }
             for file in files where file.pathExtension == "json" {
@@ -97,6 +98,36 @@ struct LogStore {
                 return item.typeId == typeID
             }.count
         }
+    }
+
+    func inboxJSONFiles() -> [URL] {
+        let inbox = root.appendingPathComponent("inbox")
+        guard let files = try? FileManager.default.contentsOfDirectory(at: inbox, includingPropertiesForKeys: nil) else {
+            return []
+        }
+        return files.filter { $0.pathExtension == "json" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+    }
+
+    func claimInboxFile(_ file: URL) throws -> URL {
+        let processing = file.appendingPathExtension("processing")
+        try FileManager.default.moveItem(at: file, to: processing)
+        return processing
+    }
+
+    func restoreInboxFile(_ processing: URL) throws {
+        try FileManager.default.moveItem(at: processing, to: processing.deletingPathExtension())
+    }
+
+    func archiveInboxFile(_ processing: URL, day: String, clock: String) throws {
+        let done = root.appendingPathComponent("done")
+        try FileManager.default.createDirectory(at: done, withIntermediateDirectories: true)
+        var destination = done.appendingPathComponent("\(day)-\(clock).json")
+        var suffix = 2
+        while FileManager.default.fileExists(atPath: destination.path) {
+            destination = done.appendingPathComponent("\(day)-\(clock)-\(suffix).json")
+            suffix += 1
+        }
+        try FileManager.default.moveItem(at: processing, to: destination)
     }
 
     private func monthURL(_ month: String) -> URL {

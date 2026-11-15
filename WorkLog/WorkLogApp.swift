@@ -31,6 +31,7 @@ struct WorkLogApp: App {
                     AppRuntime.current = appRuntime
                     model.installQuickHotKey = { QuickHotKeyCenter.shared.install($0) }
                     _ = QuickHotKeyCenter.shared.install(model.quickHotKey)
+                    model.ingestInboxIfAutomatic()
                 }
         }
         .defaultSize(width: 1280, height: 820)
@@ -41,6 +42,8 @@ struct WorkLogApp: App {
                 Button("打开其他的日志仓库") { model.pickExistingFolder() }
                 Button("导入…") { model.showImport = true }
                     .disabled(model.hasLibrary == false)
+                Button(model.inboxMenuTitle) { model.processInbox() }
+                    .disabled(model.hasLibrary == false || model.inboxPendingCount == 0)
                 Divider()
                 Button("导出…") { model.showExport = true }
                     .disabled(model.hasLibrary == false)

@@ -358,6 +358,123 @@ final class WorkLogTests: XCTestCase {
         XCTAssertEqual(QuickHotKey.doubleTap(.option).label, "双击 ⌥")
     }
 
+    func testLegacyItemDecodesWithoutSource() throws {
+        let json = """
+        {"id":"i1","date":"2026-10-24","description":"记一笔","note":"","typeId":"","subTypeId":"","order":0}
+        """
+        let item = try JSONDecoder().decode(WorkItem.self, from: Data(json.utf8))
+        XCTAssertNil(item.source)
+        XCTAssertNil(item.materialTs)
+        let object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(item)) as? [String: Any]
+        XCTAssertNil(object?["source"])
+        XCTAssertNil(object?["materialTs"])
+    }
+
+    func testMaterialTimestampKeepsTheCanonicalForm() {
+        XCTAssertTrue(WorkStamp.isCanonical(WorkStamp.isoNow()))
+        XCTAssertTrue(WorkStamp.isCanonical("2026-11-13T10:00:00Z"))
+        XCTAssertFalse(WorkStamp.isCanonical("2026-11-13T10:00:00+00:00"))
+        XCTAssertFalse(WorkStamp.isCanonical("2026-11-13T10:00:00.000Z"))
+        XCTAssertFalse(WorkStamp.isCanonical("2026-11-13"))
+    }
+
+    func testInboxAppliesNewUpdateAndDelete() throws {
+        let day = "2026-11-13"
+        let manual = WorkItem(id: "imanual0001", date: day, description: "手写", note: "", typeId: "", subTypeId: "", order: 0, source: "manual", materialTs: "2026-11-13T08:00:00Z")
+        let tool = WorkItem(id: "itool000001", date: day, description: "旧标题", note: "旧摘要", typeId: "t1", subTypeId: "s1", order: 1, source: "pi", materialTs: "2026-11-13T09:00:00Z")
+        let legacy = WorkItem(id: "ilegacy0001", date: day, description: "旧数据", note: "", typeId: "", subTypeId: "", order: 2)
+        let ops = [
+            Inbox.Op(op: "new", id: nil, description: "排查合同", note: "摘要", typeId: "tcd4ec2d71f", subTypeId: "s1f68800e8c", source: "pi", materialTs: "2026-11-13T10:00:00Z"),
+            Inbox.Op(op: "update", id: "itool000001", description: "新标题", note: "新摘要", typeId: nil, subTypeId: nil, source: "pi", materialTs: "2026-11-13T12:00:00Z"),
+            Inbox.Op(op: "delete", id: "imanual0001", description: nil, note: nil, typeId: nil, subTypeId: nil, source: nil, materialTs: nil)
+        ]
+        let result = try Inbox.apply(ops: ops, date: day, to: [manual, tool, legacy], makeID: { "i0123456789" })
+        XCTAssertFalse(result.contains { $0.id == "imanual0001" })
+        let updated = try XCTUnwrap(result.first { $0.id == "itool000001" })
+        XCTAssertEqual(updated.description, "新标题")
+        XCTAssertEqual(updated.note, "新摘要")
+        XCTAssertEqual(updated.typeId, "t1")
+        XCTAssertEqual(updated.subTypeId, "s1")
+        XCTAssertEqual(updated.date, day)
+        XCTAssertEqual(updated.materialTs, "2026-11-13T12:00:00Z")
+        let created = try XCTUnwrap(result.first { $0.id == "i0123456789" })
+        XCTAssertEqual(created.id.count, 11)
+        XCTAssertTrue(created.id.hasPrefix("i"))
+        XCTAssertEqual(created.source, "pi")
+        XCTAssertEqual(created.materialTs, "2026-11-13T10:00:00Z")
+        XCTAssertTrue(result.contains { $0.id == "ilegacy0001" })
+        let dayItems = result.filter { $0.date == day }.sorted { $0.order < $1.order }
+        XCTAssertEqual(dayItems.last?.id, "i0123456789")
+    }
+
+    func testInboxDeleteOfEmptySourceStopsLaterOps() throws {
+        let day = "2026-11-13"
+        let legacy = WorkItem(id: "ilegacy0001", date: day, description: "旧数据", note: "", typeId: "", subTypeId: "", order: 0)
+        let tool = WorkItem(id: "itool000001", date: day, description: "旧标题", note: "", typeId: "", subTypeId: "", order: 1, source: "pi", materialTs: "2026-11-13T09:00:00Z")
+        let ops = [
+            Inbox.Op(op: "delete", id: "ilegacy0001", description: nil, note: nil, typeId: nil, subTypeId: nil, source: nil, materialTs: nil),
+            Inbox.Op(op: "update", id: "itool000001", description: "不该写上", note: nil, typeId: nil, subTypeId: nil, source: "pi", materialTs: "2026-11-13T12:00:00Z"),
+            Inbox.Op(op: "new", id: nil, description: "不该新增", note: nil, typeId: nil, subTypeId: nil, source: "pi", materialTs: "2026-11-13T12:00:00Z")
+        ]
+        let result = try Inbox.apply(ops: ops, date: day, to: [legacy, tool], makeID: { "i0123456789" })
+        XCTAssertEqual(result.map(\.id), ["ilegacy0001", "itool000001"])
+        XCTAssertEqual(result[1].description, "旧标题")
+    }
+
+    func testInboxSkipsStaleOrBadUpdatesButKeepsLaterOps() throws {
+        let day = "2026-11-13"
+        let future = WorkItem(id: "ifuture0001", date: day, description: "保持", note: "原备注", typeId: "t1", subTypeId: "", order: 0, source: "pi", materialTs: "2026-11-13T18:00:00Z")
+        let equal = WorkItem(id: "iequal00001", date: day, description: "相等", note: "", typeId: "", subTypeId: "", order: 1, source: "pi", materialTs: "2026-11-13T10:00:00Z")
+        let plain = WorkItem(id: "iplain00001", date: day, description: "原标题", note: "", typeId: "", subTypeId: "", order: 2, source: "pi", materialTs: "2026-11-13T08:00:00Z")
+        let ops = [
+            Inbox.Op(op: "update", id: "ifuture0001", description: "旧内容", note: "旧备注", typeId: nil, subTypeId: nil, source: "pi", materialTs: "2026-11-13T10:00:00Z"),
+            Inbox.Op(op: "update", id: "iequal00001", description: "改写", note: nil, typeId: nil, subTypeId: nil, source: "pi", materialTs: "2026-11-13T10:00:00Z"),
+            Inbox.Op(op: "update", id: "iplain00001", description: "坏时间", note: nil, typeId: nil, subTypeId: nil, source: nil, materialTs: "2026-11-13T10:00:00.000Z"),
+            Inbox.Op(op: "update", id: "iplain00001", description: "没时间", note: nil, typeId: nil, subTypeId: nil, source: nil, materialTs: nil),
+            Inbox.Op(op: "new", id: nil, description: "后面这条要在", note: nil, typeId: nil, subTypeId: nil, source: "pi", materialTs: "2026-11-13T11:00:00Z")
+        ]
+        let result = try Inbox.apply(ops: ops, date: day, to: [future, equal, plain], makeID: { "i0123456789" })
+        XCTAssertEqual(result.first { $0.id == "ifuture0001" }?.description, "保持")
+        XCTAssertEqual(result.first { $0.id == "ifuture0001" }?.note, "原备注")
+        XCTAssertEqual(result.first { $0.id == "ifuture0001" }?.materialTs, "2026-11-13T18:00:00Z")
+        XCTAssertEqual(result.first { $0.id == "iequal00001" }?.description, "相等")
+        XCTAssertEqual(result.first { $0.id == "iplain00001" }?.description, "原标题")
+        XCTAssertEqual(result.first { $0.id == "i0123456789" }?.description, "后面这条要在")
+    }
+
+    func testInboxRejectsNewThatCarriesAnID() {
+        let op = Inbox.Op(op: "new", id: "i0123456789", description: "不该写入", note: nil, typeId: nil, subTypeId: nil, source: "pi", materialTs: "2026-11-13T10:00:00Z")
+        XCTAssertThrowsError(try Inbox.apply(ops: [op], date: "2026-11-13", to: [], makeID: { "ishouldnot1" }))
+    }
+
+    func testInboxAndDoneAreNotMonthsAndBadFileRestores() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let store = LogStore(root: root)
+        try store.saveMonth("2026-10", items: [
+            WorkItem(id: "i1", date: "2026-10-24", description: "记一笔", note: "", typeId: "", subTypeId: "", order: 0)
+        ])
+        let inbox = root.appendingPathComponent("inbox")
+        try FileManager.default.createDirectory(at: inbox, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: inbox.appendingPathComponent("2026-11-14.json.processing"))
+        let file = inbox.appendingPathComponent("2026-11-13.json")
+        try Data("{".utf8).write(to: file)
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("done"), withIntermediateDirectories: true)
+        XCTAssertEqual(store.monthsOnDisk(), ["2026-10"])
+        XCTAssertEqual(store.inboxJSONFiles().map(\.lastPathComponent), ["2026-11-13.json"])
+        let claimed = try store.claimInboxFile(file)
+        XCTAssertTrue(store.inboxJSONFiles().isEmpty)
+        XCTAssertEqual(claimed.lastPathComponent, "2026-11-13.json.processing")
+        XCTAssertThrowsError(try JSONDecoder().decode(Inbox.Payload.self, from: Data(contentsOf: claimed)))
+        try store.restoreInboxFile(claimed)
+        XCTAssertEqual(store.inboxJSONFiles().map(\.lastPathComponent), ["2026-11-13.json"])
+        let again = try store.claimInboxFile(store.inboxJSONFiles()[0])
+        try store.archiveInboxFile(again, day: "2026-11-13", clock: "101530")
+        XCTAssertTrue(store.inboxJSONFiles().isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("done/2026-11-13-101530.json").path))
+        XCTAssertEqual(store.monthsOnDisk(), ["2026-10"])
+        try FileManager.default.removeItem(at: root)
+    }
+
     private func sampleItem(_ id: String, day: String, text: String, order: Int, type: String = "", sub: String = "") -> WorkItem {
         WorkItem(id: id, date: day, description: text, note: "", typeId: type, subTypeId: sub, order: order)
     }
