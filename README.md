@@ -10,6 +10,16 @@
 
 新版本写在上面，以前的版本留在下面。打开 DMG 后把 WorkLog.app 拖进「应用程序」；ZIP 则先解压，再把应用放进去。这些安装包没有经过 Apple 公证，第一次打开时在 Finder 里按住 Control 点按应用，选择「打开」。
 
+### 0.0.7
+
+2026-11-16 · 需要 macOS 14 或更高版本
+
+- 收件箱不能删除手写的事项，包括以前没有来源标记的旧事项。
+- 一份收件箱里如果有删不掉的事项，后面的新增和更新仍会继续处理。
+
+- [WorkLog-0.0.7.dmg](https://github.com/bang668/WorkLog/releases/download/v0.0.7/WorkLog-0.0.7.dmg)
+- [WorkLog-0.0.7.zip](https://github.com/bang668/WorkLog/releases/download/v0.0.7/WorkLog-0.0.7.zip)
+
 ### 0.0.6
 
 2026-11-15 · 需要 macOS 14 或更高版本

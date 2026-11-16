@@ -94,8 +94,12 @@ enum Inbox {
                 guard let id = op.id, id.isEmpty == false else {
                     throw Problem(message: "删除缺少 id。")
                 }
-                guard let target = items.first(where: { $0.id == id }), target.source != nil else {
-                    return items
+                guard let target = items.first(where: { $0.id == id }) else {
+                    continue
+                }
+                let source = target.source ?? "manual"
+                guard source != "manual" else {
+                    continue
                 }
                 items.removeAll { $0.id == id }
             default:

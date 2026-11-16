@@ -389,7 +389,7 @@ final class WorkLogTests: XCTestCase {
             Inbox.Op(op: "delete", id: "imanual0001", description: nil, note: nil, typeId: nil, subTypeId: nil, source: nil, materialTs: nil)
         ]
         let result = try Inbox.apply(ops: ops, date: day, to: [manual, tool, legacy], makeID: { "i0123456789" })
-        XCTAssertFalse(result.contains { $0.id == "imanual0001" })
+        XCTAssertTrue(result.contains { $0.id == "imanual0001" })
         let updated = try XCTUnwrap(result.first { $0.id == "itool000001" })
         XCTAssertEqual(updated.description, "新标题")
         XCTAssertEqual(updated.note, "新摘要")
@@ -407,18 +407,38 @@ final class WorkLogTests: XCTestCase {
         XCTAssertEqual(dayItems.last?.id, "i0123456789")
     }
 
-    func testInboxDeleteOfEmptySourceStopsLaterOps() throws {
+    func testInboxKeepsHandwrittenItemsAndContinues() throws {
         let day = "2026-11-13"
-        let legacy = WorkItem(id: "ilegacy0001", date: day, description: "旧数据", note: "", typeId: "", subTypeId: "", order: 0)
-        let tool = WorkItem(id: "itool000001", date: day, description: "旧标题", note: "", typeId: "", subTypeId: "", order: 1, source: "pi", materialTs: "2026-11-13T09:00:00Z")
-        let ops = [
-            Inbox.Op(op: "delete", id: "ilegacy0001", description: nil, note: nil, typeId: nil, subTypeId: nil, source: nil, materialTs: nil),
-            Inbox.Op(op: "update", id: "itool000001", description: "不该写上", note: nil, typeId: nil, subTypeId: nil, source: "pi", materialTs: "2026-11-13T12:00:00Z"),
-            Inbox.Op(op: "new", id: nil, description: "不该新增", note: nil, typeId: nil, subTypeId: nil, source: "pi", materialTs: "2026-11-13T12:00:00Z")
-        ]
-        let result = try Inbox.apply(ops: ops, date: day, to: [legacy, tool], makeID: { "i0123456789" })
-        XCTAssertEqual(result.map(\.id), ["ilegacy0001", "itool000001"])
-        XCTAssertEqual(result[1].description, "旧标题")
+        let handwritten = WorkItem(id: "i1", date: day, description: "手写的", note: "", typeId: "", subTypeId: "", order: 0, source: "manual", materialTs: "2026-11-13T08:00:00Z")
+        let tool = WorkItem(id: "i2", date: day, description: "工具写的", note: "", typeId: "", subTypeId: "", order: 1, source: "pi", materialTs: "2026-11-13T09:00:00Z")
+        let legacy = WorkItem(id: "i3", date: day, description: "老数据", note: "", typeId: "", subTypeId: "", order: 2)
+
+        let refusedManual = try Inbox.apply(ops: [deleteOp("i1")], date: day, to: [handwritten, tool], makeID: { "i0123456789" })
+        XCTAssertEqual(refusedManual.map(\.description), ["手写的", "工具写的"])
+
+        let refusedLegacy = try Inbox.apply(ops: [deleteOp("i3")], date: day, to: [legacy, tool], makeID: { "i0123456789" })
+        XCTAssertEqual(refusedLegacy.map(\.description), ["老数据", "工具写的"])
+
+        let removedTool = try Inbox.apply(ops: [deleteOp("i2")], date: day, to: [handwritten, tool], makeID: { "i0123456789" })
+        XCTAssertEqual(removedTool.map(\.description), ["手写的"])
+
+        let mixed = try Inbox.apply(ops: [deleteOp("i2"), deleteOp("i1")], date: day, to: [handwritten, tool], makeID: { "i0123456789" })
+        XCTAssertEqual(mixed.map(\.description), ["手写的"])
+
+        let continued = try Inbox.apply(
+            ops: [
+                deleteOp("i1"),
+                Inbox.Op(op: "new", id: nil, description: "新条目", note: nil, typeId: nil, subTypeId: nil, source: "pi", materialTs: "2026-11-13T10:00:00Z")
+            ],
+            date: day,
+            to: [handwritten],
+            makeID: { "i0123456789" }
+        )
+        XCTAssertEqual(continued.map(\.description), ["手写的", "新条目"])
+    }
+
+    private func deleteOp(_ id: String) -> Inbox.Op {
+        Inbox.Op(op: "delete", id: id, description: nil, note: nil, typeId: nil, subTypeId: nil, source: nil, materialTs: nil)
     }
 
     func testInboxSkipsStaleOrBadUpdatesButKeepsLaterOps() throws {
